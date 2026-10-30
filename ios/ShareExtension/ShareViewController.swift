@@ -4,7 +4,7 @@ import UIKit
 import UniformTypeIdentifiers
 
 /// Einstieg der Share Extension "Inventar übernehmen". Eine Nachricht mit Inventar-Code wird
-/// per Teilen an BlechWiki Offline geschickt, wie auf Android. Die Extension darf die App nicht
+/// per Teilen an BlechWiki geschickt, wie auf Android. Die Extension darf die App nicht
 /// öffnen, deshalb übernimmt sie das Inventar selbst. Die Bücher lädt die App beim nächsten Öffnen.
 final class ShareViewController: UIViewController {
 
@@ -105,7 +105,7 @@ struct ShareImportView: View {
                 case .loading:
                     ProgressView().frame(maxWidth: .infinity)
                 case .noCatalog:
-                    Text("Öffne BlechWiki Offline einmal, damit das Bücherverzeichnis geladen wird. Danach kannst du den Code hier übernehmen.")
+                    Text("Öffne BlechWiki einmal, damit das Bücherverzeichnis geladen wird. Danach kannst du den Code hier übernehmen.")
                 case .result(.noCode):
                     Text("In der geteilten Nachricht steht kein Inventar-Code. Er beginnt mit BBW-.")
                 case .result(.invalid):
@@ -140,13 +140,13 @@ struct ShareImportView: View {
             } header: {
                 Text(recognizedTitle(books))
             } footer: {
-                Text("Der Inhalt der Bücher wird geladen, sobald du BlechWiki Offline öffnest.")
+                Text("Der Inhalt der Bücher wird geladen, sobald du BlechWiki öffnest.")
             }
         }
         if unknown > 0 {
             Section {
                 let subject = unknown == 1 ? "1 Buch ist" : "\(unknown) Bücher sind"
-                Text("\(subject) noch nicht im Verzeichnis auf diesem iPhone. Öffne BlechWiki Offline und füge den Code dort unter Inventar › Inventar-Code einfügen ein. Dann sucht die App bei BlechWiki nach neuen Büchern.")
+                Text("\(subject) noch nicht im Verzeichnis auf diesem iPhone. Öffne BlechWiki und füge den Code dort unter Inventar › Inventar-Code einfügen ein. Dann sucht die App bei BlechWiki nach neuen Büchern.")
                     .font(.subheadline)
             }
         }

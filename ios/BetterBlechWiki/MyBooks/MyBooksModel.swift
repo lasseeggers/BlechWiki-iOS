@@ -74,8 +74,8 @@ final class MyBooksModel {
         offline = (try? container.myBooks.offlineStatus()) ?? OfflineStatus(owned: 0, available: 0)
         selectedAppendix = try? container.settings.selectedEgAppendix()
         shareMessage = (try? container.myBooks.inventoryCode()).flatMap { $0 }.map { code in
-            "Inventar für BlechWiki Offline, \(booksLabel(offline.owned)).\n" +
-                "Übernehmen: Nachricht an BlechWiki Offline teilen oder in der App unter Inventar › Inventar-Code einfügen.\n\n\(code)"
+            "Inventar für BlechWiki, \(booksLabel(offline.owned)).\n" +
+                "Übernehmen: Nachricht an BlechWiki teilen oder in der App unter Inventar › Inventar-Code einfügen.\n\n\(code)"
         }
         reloadSections()
         reloadImport()

@@ -1,6 +1,6 @@
 # Datenschutzerklärung
 
-für die App „BlechWiki Offline“ für iPhone. Stand: 30.10.2026
+für die App „BlechWiki“ für iPhone. Stand: 30.10.2026
 
 ## Verantwortlich
 

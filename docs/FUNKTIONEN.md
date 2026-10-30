@@ -1,6 +1,6 @@
 # Funktionen
 
-BlechWiki Offline beantwortet eine Frage: In welchem Bläserheft steht dieses Stück, und haben wir das Heft im Notenschrank? Die Daten kommen von [blechwiki.de](https://www.blechwiki.de/), gesucht wird lokal auf dem Gerät.
+BlechWiki beantwortet eine Frage: In welchem Bläserheft steht dieses Stück, und haben wir das Heft im Notenschrank? Die Daten kommen von [blechwiki.de](https://www.blechwiki.de/), gesucht wird lokal auf dem Gerät.
 
 Screenshots: links Android (Galaxy S8, Android 9), rechts iOS (Simulator iPhone 18 Pro). Beide mit Landeskirche Nordelbien und demselben Inventar aus 6 Büchern.
 

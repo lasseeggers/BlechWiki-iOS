@@ -1,4 +1,4 @@
-# BlechWiki Offline für iPhone
+# BlechWiki für iPhone
 
 iOS-App, die zeigt, in welchen Bläserheften ein Stück steht und ob das Heft im eigenen Notenschrank liegt. Die Daten kommen über die SOAP-Schnittstelle von [blechwiki.de](https://www.blechwiki.de/extras/), das Änderungsprotokoll der Stammdaten aus der REST-API von [BlechWikiDK](https://github.com/DieterKipp/BlechWikiDK). Gesucht wird lokal auf dem Gerät, auch ohne Internet.
 

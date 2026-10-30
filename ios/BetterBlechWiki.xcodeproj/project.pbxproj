@@ -246,7 +246,7 @@
 				DEVELOPMENT_TEAM = SQH36C5KAU;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "BlechWiki Offline";
+				INFOPLIST_KEY_CFBundleDisplayName = "BlechWiki";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -284,7 +284,7 @@
 				DEVELOPMENT_TEAM = SQH36C5KAU;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "BlechWiki Offline";
+				INFOPLIST_KEY_CFBundleDisplayName = "BlechWiki";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

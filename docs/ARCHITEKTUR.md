@@ -1,4 +1,4 @@
-# BlechWiki Offline: API-Analyse und Architektur
+# BlechWiki: API-Analyse und Architektur
 
 Stand: 27.10.2026, Grundlage sind Testaufrufe gegen `https://pcportal.ddns.net/LiteraService/service1.asmx`.
 

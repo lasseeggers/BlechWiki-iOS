@@ -11,7 +11,7 @@ struct SearchView: View {
 
     var body: some View {
         content
-            .navigationTitle("BlechWiki Offline")
+            .navigationTitle("BlechWiki")
             // Kurz halten: Auf schmalen Geräten passen ~25 Zeichen
             .appSearchable(text: $model.query, prompt: "Lied, EG-Nr. oder Buch")
             .autocorrectionDisabled()
