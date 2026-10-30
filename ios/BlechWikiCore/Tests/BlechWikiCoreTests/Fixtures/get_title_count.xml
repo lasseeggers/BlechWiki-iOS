@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><soap:Body><GetTitelAnzahlResponse xmlns="http://pcportal.ddns.net/"><GetTitelAnzahlResult>14</GetTitelAnzahlResult></GetTitelAnzahlResponse></soap:Body></soap:Envelope>
