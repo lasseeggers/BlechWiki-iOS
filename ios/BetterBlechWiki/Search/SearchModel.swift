@@ -9,8 +9,6 @@ enum InitialLoad { case ready, loading, failed }
 struct StartState {
     var offlineStatus = OfflineStatus(owned: 0, available: 0)
     var selectedAppendix: EgAppendix?
-    /// Wann das Verzeichnis zuletzt als aktuell bestätigt wurde.
-    var lastCheckedAt: Date?
 }
 
 @MainActor
@@ -60,8 +58,7 @@ final class SearchModel {
         hasData = (try? container.settings.hasData()) ?? false
         start = StartState(
             offlineStatus: (try? container.myBooks.offlineStatus()) ?? OfflineStatus(owned: 0, available: 0),
-            selectedAppendix: try? container.settings.selectedEgAppendix(),
-            lastCheckedAt: try? container.settings.lastCheckedAt()
+            selectedAppendix: try? container.settings.selectedEgAppendix()
         )
         scheduleSearch(delay: .zero)
     }

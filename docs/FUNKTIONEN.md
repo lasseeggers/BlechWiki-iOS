@@ -16,7 +16,7 @@ Screenshots: links Android (Galaxy S8, Android 9), rechts iOS (Simulator iPhone 
 - **Inventar** zeigt, wie viele Bücher eingetragen sind und ob ihr Inhalt schon offline vorliegt.
 - **Gesangbuch** öffnet alle EG-Lieder nach Anlass, siehe unten.
 - **Landeskirche** legt fest, welche Nummern aus den EG-Anhängen erscheinen und welche Hefte im Inventar vorgeschlagen werden.
-- **Aktualisierung:** Die App fragt höchstens einmal am Tag nach neuen und korrigierten Büchern, Liedern und Komponisten und lädt nur, was sich geändert hat. Einmal im Monat lädt sie im WLAN zur Sicherheit alles neu.
+- **App-Informationen** erklärt, wie die App ihre Daten aktualisiert, und zeigt das Datum der letzten Prüfung, die Versionsnummer sowie Links zu Impressum und Datenschutzerklärung. Die App fragt höchstens einmal am Tag nach neuen und korrigierten Büchern, Liedern und Komponisten und lädt nur, was sich geändert hat. Einmal im Monat lädt sie im WLAN zur Sicherheit alles neu.
 
 ## Suche
 

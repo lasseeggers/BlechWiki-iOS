@@ -1,10 +1,23 @@
 # Datenschutzerklärung
 
-für die App „BlechWiki“ für iPhone. Stand: 30.10.2026
+für die App „BlechWiki“ für iPhone und Android. Stand: 31.10.2026
 
 ## Verantwortlich
 
-[NAME, ANSCHRIFT, E-MAIL]
+CODEANKER GmbH\
+Holm 66\
+24937 Flensburg\
+Telefon: +49 (0) 461 40 68 13-40\
+E-Mail: info@codeanker.de
+
+Weitere Angaben zum Anbieter stehen im [Impressum](IMPRESSUM.md).
+
+## Datenschutzbeauftragter
+
+DataCo GmbH\
+Nymphenburger Str. 86\
+80636 München\
+Telefon: +49 89 7400 45840
 
 ## Kurz gesagt
 
@@ -31,4 +44,6 @@ Wie bei jeder Verbindung im Internet erhalten die Server dabei die IP-Adresse de
 
 ## Deine Rechte
 
-Da die App keine personenbezogenen Daten an den Verantwortlichen überträgt, liegen dort keine Daten über dich vor. Für Fragen zum Datenschutz erreichst du den Verantwortlichen unter der oben genannten Adresse.
+Da die App keine personenbezogenen Daten an den Verantwortlichen überträgt, liegen dort keine Daten über dich vor. Für Fragen zum Datenschutz erreichst du den Verantwortlichen und den Datenschutzbeauftragten unter den oben genannten Adressen.
+
+Du kannst dich außerdem bei einer Datenschutz-Aufsichtsbehörde beschweren. Für die CODEANKER GmbH ist das Unabhängige Landeszentrum für Datenschutz Schleswig-Holstein zuständig.

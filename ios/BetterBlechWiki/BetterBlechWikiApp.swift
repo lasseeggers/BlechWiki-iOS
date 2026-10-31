@@ -61,6 +61,8 @@ enum Route: Hashable {
     case fundstellen(FundstellenRoute)
     /// Gesangbuch nach Anlass.
     case hymnal
+    /// Aktualisierung, Impressum, Datenschutz, Version.
+    case appInfo
 }
 
 struct FundstellenRoute: Hashable {
@@ -111,12 +113,14 @@ struct RootView: View {
                         FundstellenView(container: container, route: route)
                     case .hymnal:
                         HymnalView(container: container)
+                    case .appInfo:
+                        AppInfoView(container: container)
                     }
                 }
         }
         .environment(\.openRoute, OpenRouteAction { path.append($0) })
         #if DEBUG
-        // Für Screenshots im Simulator: BBW_OPEN = "mybooks", "hymnal", "eg:<ixUr>", "book:<BuchId>" oder "title:<Titel>".
+        // Für Screenshots im Simulator: BBW_OPEN = "mybooks", "hymnal", "appinfo", "eg:<ixUr>", "book:<BuchId>" oder "title:<Titel>".
         // BBW_LABEL und BBW_DETAIL setzen Überschrift und Unterzeile wie beim Öffnen aus der Suche
         .task {
             let env = ProcessInfo.processInfo.environment
@@ -126,6 +130,7 @@ struct RootView: View {
             switch (parts.first, parts.count > 1 ? parts[1] : "") {
             case ("mybooks", _): path.append(Route.myBooks)
             case ("hymnal", _): path.append(Route.hymnal)
+            case ("appinfo", _): path.append(Route.appInfo)
             case ("eg", let key):
                 path.append(Route.fundstellen(FundstellenRoute(query: .byEgMelody(Int(key) ?? 0), label: env["BBW_LABEL"] ?? "EG-Melodie \(key)", detail: detail)))
             case ("book", let key): path.append(Route.fundstellen(FundstellenRoute(query: .byBook(key), label: env["BBW_LABEL"] ?? key, detail: detail)))

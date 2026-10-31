@@ -171,20 +171,15 @@ private struct StartView: View {
                 }
             }
 
-            // Beantwortet die naheliegende Frage, ob "Offline" heißt, dass nichts mehr nachkommt.
-            // Als Text ohne Karte: Hier gibt es nichts anzutippen.
             Section {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Aktualisierung").font(.subheadline.weight(.semibold)).foregroundStyle(Color.brand)
-                    Text("Die Daten kommen von blechwiki.de. Beim Öffnen fragt die App höchstens einmal am Tag nach neuen und korrigierten Büchern, Liedern und Komponisten. Geladen wird nur, was sich geändert hat, einmal im Monat im WLAN zur Sicherheit alles. Ohne Internet bleibt der letzte Stand nutzbar.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Text("Zuletzt geprüft: \(state.lastCheckedAt?.formatted(standFormat) ?? "noch nie")")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                NavigationLink(value: Route.appInfo) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("App-Informationen")
+                        Text("Aktualisierung, Version, Impressum und Datenschutz")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 8, leading: 4, bottom: 8, trailing: 4))
             }
         }
         // Eine Karte je Eintrag wie in der Android-App. Mit dem Standardabstand zwischen den
