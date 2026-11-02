@@ -34,6 +34,7 @@ struct AppInfoView: View {
             }
         }
         .listSectionSpacing(.compact)
+        .readableWidth()
         .navigationTitle("App-Informationen")
         .navigationBarTitleDisplayMode(.inline)
         .task {

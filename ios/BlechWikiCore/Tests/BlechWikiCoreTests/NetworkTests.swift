@@ -2,219 +2,165 @@ import Foundation
 import Testing
 @testable import BlechWikiCore
 
-enum Fixtures {
-    static func data(_ name: String) -> Data {
-        let url = Bundle.module.url(forResource: name, withExtension: nil, subdirectory: "Fixtures")!
-        return try! Data(contentsOf: url)
-    }
-}
-
-/// Merkt sich Requests und liefert feste Antworten.
+/// Merkt sich Requests und liefert der Reihe nach feste Antworten.
 final class FakeTransport: @unchecked Sendable {
     var requests: [URLRequest] = []
-    var response: (Data, Int)
+    var responses: [(Data, Int)]
 
-    init(_ fixture: String, status: Int = 200) {
-        response = (Fixtures.data(fixture), status)
+    init(_ bodies: String..., status: Int = 200) {
+        responses = bodies.map { (Data($0.utf8), status) }
     }
 
-    init(data: Data, status: Int) {
-        response = (data, status)
-    }
-
-    var api: SoapBlechWikiAPI {
-        SoapBlechWikiAPI(transport: { request in
+    var api: JsonBlechWikiAPI {
+        JsonBlechWikiAPI(baseURL: URL(string: "https://example.org/RestBlechWiki/api/")!, transport: { request in
             self.requests.append(request)
-            return self.response
+            return self.responses.count > 1 ? self.responses.removeFirst() : self.responses[0]
         })
     }
 
-    var restAPI: JsonBlechWikiRestAPI {
-        JsonBlechWikiRestAPI(transport: { request in
-            self.requests.append(request)
-            return self.response
-        })
-    }
-
-    var lastBody: String { String(decoding: requests.last?.httpBody ?? Data(), as: UTF8.self) }
-
-    /// Pfad und Query des letzten Requests, z. B. "/RestBlechWiki/api/Version?Tabelle=Buch&counter=1".
-    var lastTarget: String {
-        guard let url = requests.last?.url, let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return "" }
-        return components.percentEncodedPath + (components.percentEncodedQuery.map { "?" + $0 } ?? "")
+    /// Pfad und Query eines Requests ohne Basis-URL, z. B. "Version?Tabelle=Buch&counter=0".
+    func target(_ index: Int) -> String {
+        guard let url = requests[index].url, let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return "" }
+        let path = components.path.replacingOccurrences(of: "/RestBlechWiki/api/", with: "")
+        return path + (components.query.map { "?" + $0 } ?? "")
     }
 }
 
-struct SoapEnvelopeTests {
+/// Antworten gekürzt aus echten Abrufen vom 30.10.2026, wie in der Android-App.
+struct RestAPITests {
 
-    @Test func buildSetztMethodeImNamespace() {
-        let xml = SoapEnvelope.build("GetTitel", [("Suchstring", "Lobe den")])
-        #expect(xml.contains(#"<GetTitel xmlns="http://pcportal.ddns.net/"><Suchstring>Lobe den</Suchstring></GetTitel>"#))
+    @Test func titelAusDemProtokollMitLoeschungen() async throws {
+        let fake = FakeTransport("""
+            [{"titelohneKomma":"Alle Augen warten auf dich Herre","titel":"Alle Augen warten auf dich, Herre","ix":10374,"changecounter":68,"change":"new"},
+             {"titelohneKomma":"Kanon","titel":"Kanon ","ix":8358,"changecounter":69,"change":"delete"}]
+            """)
+
+        let titles = try await fake.api.getTitles(after: 66)
+
+        #expect(titles.maxCounter == 69)
+        #expect(titles.rows == [
+            TitleDto(ix: 10374, title: "Alle Augen warten auf dich, Herre", deleted: false, changeCounter: 68),
+            TitleDto(ix: 8358, title: "Kanon", deleted: true, changeCounter: 69),
+        ])
+        #expect(fake.target(0) == "Version?Tabelle=Titel&counter=66")
+        #expect(fake.requests[0].value(forHTTPHeaderField: "User-Agent") == JsonBlechWikiAPI.defaultUserAgent)
     }
 
-    @Test func buildOhneParameter() {
-        #expect(SoapEnvelope.build("GetBücher", []).contains(#"<GetBücher xmlns="http://pcportal.ddns.net/"></GetBücher>"#))
+    @Test func buecherMitCoverAusDemKurznamen() async throws {
+        let fake = FakeTransport("""
+            [{"buchId":"1","buchkurz":"101Bläserv","buch":"101 Bläservorspiele zum EG","untertitel":"","erscheinjahr":"1997",
+              "herausgeber":"Evangelischen Posaunendienst","herausgvorname":"","verlag":"Buch & Musik ejw Stuttgtart","verlagsnummer":"",
+              "zulieferung":"","relevanz":20,"vorhanden":"truetrue","changecounter":122,"change":"new"}]
+            """)
+
+        #expect(try await fake.api.getBooks(after: 0).rows == [
+            BookDto(
+                id: "1", title: "101 Bläservorspiele zum EG", subtitle: nil, year: 1997,
+                editor: "Evangelischen Posaunendienst", editorFirstName: nil, publisher: "Buch & Musik ejw Stuttgtart",
+                publisherNumber: nil, coverUrl: "https://teddymuetze.ddns.net/Bilder/BilderBuch/mini60/101Bläserv.jpg",
+                deleted: false, changeCounter: 122
+            ),
+        ])
+        #expect(fake.target(0) == "Version?Tabelle=Buch&counter=0")
     }
 
-    @Test func escaping() {
-        #expect("Tom & Jerry <3 \"x>".xmlEscaped == "Tom &amp; Jerry &lt;3 &quot;x&gt;")
-        #expect("Ach Gott, dir muss ich's".sqlQuoted == "Ach Gott, dir muss ich''s")
-        #expect("Lobe_den 100% [x]".likeEscaped == "Lobe[_]den 100[%] [[]x]")
-        #expect(SoapEnvelope.soapAction("GetTitel") == "\"http://pcportal.ddns.net/GetTitel\"")
-    }
-}
+    @Test func komponistenMitLebensdatenUndSchreibvarianten() async throws {
+        let fake = FakeTransport("""
+            [{"id":"29","kurz":"Armsdorff A","komponist":"Armsdorff, Andreas (1670-1699)","friendlyKomponistName":"Armsdorff, Andreas","changecounter":78,"change":"new"},
+             {"id":"29","kurz":"Armsdorff A","komponist":"Armsdorf, Andreas ( alias Armsdorff, Andreas 1670-1699)","friendlyKomponistName":"Armsdorf, Andreas","changecounter":78,"change":"new"},
+             {"id":"2000","kurz":"Kreuter W","komponist":"Kreuter, Walter ( - )","friendlyKomponistName":"Kreuter, Walter","changecounter":78,"change":"update"}]
+            """)
 
-struct DataSetParserTests {
-
-    @Test func liestZeilenUndUeberspringtSchema() throws {
-        let titles = try DataSetParser.parseRows(Fixtures.data("get_titles.xml")) { $0.text("TITEL") }
-        #expect(titles.count == 14)
-        #expect(titles.first == "Alles, was Odem hat, lobe den Herrn")
-        #expect(titles.last == "Lobe den Herrn, o Seele mein")
-        // Im Original "Lobe den Herren " mit Leerzeichen
-        #expect(titles.contains("Lobe den Herren"))
+        #expect(try await fake.api.getComposers(after: 0).rows == [
+            ComposerDto(id: "29", name: "Armsdorff, Andreas", born: "1670", died: "1699", isAlias: false, deleted: false, changeCounter: 78),
+            ComposerDto(id: "29", name: "Armsdorf, Andreas", born: nil, died: nil, isAlias: true, deleted: false, changeCounter: 78),
+            ComposerDto(id: "2000", name: "Kreuter, Walter", born: nil, died: nil, isAlias: false, deleted: false, changeCounter: 78),
+        ])
     }
 
-    @Test func leeresDiffgram() throws {
-        #expect(try DataSetParser.parseRows(Fixtures.data("empty_dataset.xml")) { $0 }.isEmpty)
-    }
-
-    @Test func fehlendeSpalte() throws {
-        let row = try DataSetParser.parseRows(Fixtures.data("get_titles.xml")) { $0 }.first!
-        #expect(row.text("GibtEsNicht") == "")
-        #expect(row.textOrNil("GibtEsNicht") == nil)
-        #expect(row.intOrNil("GibtEsNicht") == nil)
-    }
-
-    @Test func ohneDiffgramIstMalformed() {
-        #expect(throws: BlechWikiError.self) {
-            try DataSetParser.parseRows(Fixtures.data("get_title_count.xml")) { $0 }
+    @Test func lebensdatenInAllenSchreibweisenDerApi() {
+        func dates(_ text: Substring) -> [String?] {
+            let d = JsonBlechWikiAPI.lifeDates(text)
+            return [d.born, d.died]
         }
+        #expect(dates("1954- ") == ["1954", nil])
+        #expect(dates("-1700") == [nil, "1700"])
+        #expect(dates("um 1600-nach 1650") == ["um 1600", "nach 1650"])
+        #expect(dates("16. Jh.-") == ["16. Jh.", nil])
+        #expect(dates("") == [nil, nil])
     }
 
-    @Test func skalarUndFault() throws {
-        #expect(try DataSetParser.parseScalar(Fixtures.data("get_title_count.xml"), resultElement: "GetTitelAnzahlResult") == "14")
-        #expect(DataSetParser.parseFaultString(Fixtures.data("soap_fault.xml"))?.contains("Kein schließendes Anführungszeichen") == true)
-        #expect(DataSetParser.parseFaultString(Data("<html>Bad Gateway".utf8)) == nil)
-    }
-}
+    @Test func egLiederEinEintragJeTeil() async throws {
+        let fake = FakeTransport("""
+            [{"nr":674,"nr2":1,"lied":"Der Friede des Herrn sei mit euch allen","anlass":"Liturgische Gesänge","ix":188,"ixUr":188,"egTeil":"N"}]
+            """)
 
-struct SoapAPITests {
-
-    @Test func requestIstSoap11MitUmlautImHeader() async throws {
-        let fake = FakeTransport("get_books.xml")
-        _ = try await fake.api.getBooks()
-        let request = try #require(fake.requests.last)
-        #expect(request.httpMethod == "POST")
-        #expect(request.value(forHTTPHeaderField: "SOAPAction") == "\"http://pcportal.ddns.net/GetBücher\"")
-        #expect(request.value(forHTTPHeaderField: "Content-Type")?.hasPrefix("text/xml") == true)
+        #expect(try await fake.api.getEgSongs() == [
+            EgSongDto(ix: 188, ixUr: 188, title: "Der Friede des Herrn sei mit euch allen", part: "N", number: 674, occasion: "Liturgische Gesänge"),
+        ])
+        #expect(fake.target(0) == "EG")
     }
 
-    @Test func maskiertApostrophUndXml() async throws {
-        let fake = FakeTransport("get_fundstellen.xml")
-        _ = try await fake.api.getFundstellenByTitle("Ich's & du")
-        #expect(fake.lastBody.contains("<vTitel>Ich''s &amp; du</vTitel>"))
-    }
+    @Test func fundstellenUeberDieSchluesselDerStammdaten() async throws {
+        let fake = FakeTransport("""
+            [{"buch":"Bläsermusik 2025 - Württemberg","nr":"113","titel":"Lobe den Herren, den mächtigen König der Ehren","zus":"",
+              "komponist":"Fünfgeld, Traugott","besetzung":"2+2","vorzeichen":"1b","titelZ":null,"buchId":"4035","quellekurz":"WBH2025"}]
+            """)
+        let api = fake.api
+        let expected = [
+            FundstelleDto(
+                bookId: "4035", bookTitle: "Bläsermusik 2025 - Württemberg", number: "113",
+                title: "Lobe den Herren, den mächtigen König der Ehren", addition: nil, composer: "Fünfgeld, Traugott",
+                scoring: "2+2", keySignature: "1b", coverUrl: "https://teddymuetze.ddns.net/Bilder/BilderBuch/mini60/WBH2025.jpg"
+            ),
+        ]
 
-    @Test func maskiertLikePlatzhalter() async throws {
-        let fake = FakeTransport("get_titles.xml")
-        let titles = try await fake.api.getTitles("100% Lob_")
-        #expect(fake.lastBody.contains("<Suchstring>100[%] Lob[_]</Suchstring>"))
-        #expect(titles.allSatisfy { $0 == $0.trimmingCharacters(in: .whitespaces) })
-    }
-
-    @Test func zaehlerUndDatenversion() async throws {
-        #expect(try await FakeTransport("get_title_count.xml").api.getTitleCount("Lobe den") == 14)
-        let version = try await FakeTransport("get_data_version.xml").api.getDataVersion()
-        #expect(version == DataVersionDto(lastBookNumber: 5088, lastComposerNumber: 5451, lastTitleNumber: 65738))
-    }
-
-    @Test func buecherKomponistenLieder() async throws {
-        let books = try await FakeTransport("get_books.xml").api.getBooks()
-        #expect(books[1].id == "30klChorRe")
-        #expect(books[1].year == nil)
-
-        let composers = try await FakeTransport("get_composers.xml").api.getComposers()
-        #expect(composers.map(\.shortName) == ["Aas T W", "Abel J"])
-        #expect(composers[0].died == nil)
-        #expect(composers[1].died == "1928")
-
-        let songs = try await FakeTransport("get_eg_songs.xml").api.getEgSongs()
-        #expect(songs[0] == EgSongDto(ix: 1, ixUr: 1, title: "Abend ist es Herr; die Stunde", part: "alleAnhänge", number: 9999, occasion: "Abend"))
-        #expect(songs.map(\.part) == ["alleAnhänge", "BEL", "Stamm"])
-
-        let appendices = try await FakeTransport("get_eg_appendices.xml").api.getEgAppendices()
-        #expect(appendices.count == 14)
-        #expect(appendices.contains { $0.code == "NB" && $0.name == "Niedersachsen/Bremen" })
-
-        #expect(try await FakeTransport("get_fundstellen.xml").api.getFundstellenByTitle("x").count == 5)
-    }
-
-    @Test func egIxUrAlsZahl() async throws {
-        let fake = FakeTransport("get_fundstellen.xml")
-        _ = try await fake.api.getFundstellenByEgSong(859)
-        #expect(fake.lastBody.contains("<EGIxUr>859</EGIxUr>"))
-        await #expect(throws: BlechWikiError.self) { try await fake.api.getFundstellenByEgSong(40_000) }
+        #expect(try await api.getFundstellenByTitle(10374) == expected)
+        #expect(try await api.getFundstellenByEgSong(859) == expected)
+        #expect(try await api.getFundstellenByBook("4035") == expected)
+        #expect(try await api.getFundstellenByComposer("2000") == expected)
+        #expect((0..<4).map(fake.target) == ["Titel/10374", "EG/859", "Buch/4035", "Komponist/2000"])
     }
 
     @Test func fehler() async throws {
-        await #expect {
-            try await FakeTransport("soap_fault.xml", status: 500).api.getFundstellenByTitle("x")
-        } throws: { error in
-            if case .soapFault(let text) = error as? BlechWikiError { return text.contains("Anführungszeichen") }
-            return false
+        await #expect(throws: BlechWikiError.httpError(500)) {
+            try await FakeTransport(#"{"Message":"Fehler"}"#, status: 500).api.getFundstellenByBook("999999")
         }
-        await #expect(throws: BlechWikiError.httpError(503)) {
-            try await FakeTransport(data: Data(), status: 503).api.getBooks()
+        await #expect(throws: BlechWikiError.malformedResponse("Version: kein Array")) {
+            try await FakeTransport(#"{"Message":"Fehler"}"#).api.getTitles(after: 1)
         }
+        let offline = JsonBlechWikiAPI(transport: { _ in throw URLError(.notConnectedToInternet) })
+        await #expect(throws: BlechWikiError.self) { try await offline.getEgSongs() }
+    }
+
+    /// Ein Eintrag ohne Pflichtfeld darf nicht den ganzen Abgleich aufhalten.
+    @Test func zeileOhnePflichtfeldWirdUebersprungen() async throws {
+        let fake = FakeTransport("""
+            [{"buchId":"1","buchkurz":null,"buch":"Kaputt","changecounter":122,"change":"new"},
+             {"buchId":"2","buchkurz":"Heft","buch":"Heft","changecounter":123,"change":"new"}]
+            """)
+
+        let books = try await fake.api.getBooks(after: 0)
+        #expect(books.rows.map(\.id) == ["2"])
+        #expect(books.maxCounter == 123)
+    }
+
+    /// Ein neues Buch ohne Kurznamen allein im Änderungsprotokoll: kein Fehler, sonst scheiterte
+    /// jeder Abgleich bis zum nächsten Vollabgleich. Der Zähler zählt trotzdem.
+    @Test func aenderungenNurMitUnlesbarerZeile() async throws {
+        let fake = FakeTransport(#"[{"buchId":"3","buchkurz":null,"buch":"Neu","changecounter":124,"change":"new"}]"#)
+
+        #expect(try await fake.api.getBooks(after: 123) == TableRows(rows: [], maxCounter: 124))
+        // Ohne lesbaren Zähler bleibt es ein Formatfehler
         await #expect(throws: BlechWikiError.self) {
-            try await FakeTransport(data: Data("<kaputt".utf8), status: 200).api.getBooks()
-        }
-    }
-}
-
-struct RestAPITests {
-
-    private func fake(_ json: String, status: Int = 200) -> FakeTransport {
-        FakeTransport(data: Data(json.utf8), status: status)
-    }
-
-    @Test func getLatestChangeLiefertDenHoechstenZaehler() async throws {
-        let fake = fake(
-            #"[{"buchId":"1891","buchkurz":"X","change":"update","changecounter":13},"# +
-                #"{"buchId":"4041","buchkurz":"Y","change":"new","changecounter":107}]"#
-        )
-
-        #expect(try await fake.restAPI.getLatestChange(.books, after: 1) == 107)
-        #expect(fake.lastTarget == "/RestBlechWiki/api/Version?Tabelle=Buch&counter=1")
-    }
-
-    @Test func getLatestChangeOhneAenderungenIstNil() async throws {
-        #expect(try await fake("[]").restAPI.getLatestChange(.titles, after: 69) == nil)
-    }
-
-    @Test func unerwartetesJsonIstMalformedResponse() async throws {
-        await #expect {
-            try await fake(#"{"Message":"Fehler"}"#).restAPI.getLatestChange(.composers, after: 1)
-        } throws: { error in
-            if case .malformedResponse = error as? BlechWikiError { return true }
-            return false
-        }
-        await #expect {
-            try await fake("<html>Bad Gateway").restAPI.getLatestChange(.books, after: 1)
-        } throws: { error in
-            if case .malformedResponse = error as? BlechWikiError { return true }
-            return false
+            try await FakeTransport(#"[{"buchId":"3","buch":"Neu"}]"#).api.getBooks(after: 123)
         }
     }
 
-    @Test func netzfehlerWirdZuNetwork() async throws {
-        let api = JsonBlechWikiRestAPI(transport: { _ in throw URLError(.notConnectedToInternet) })
-        await #expect {
-            try await api.getLatestChange(.books, after: 1)
-        } throws: { error in
-            if case .network = error as? BlechWikiError { return true }
-            return false
+    /// Ist keine Zeile lesbar, hat sich das Format geändert. Dann lieber nichts übernehmen.
+    @Test func ohneLesbareZeileIstDieAntwortFehlerhaft() async throws {
+        await #expect(throws: BlechWikiError.malformedResponse("Version: Feld buchkurz fehlt")) {
+            try await FakeTransport(#"[{"buchId":"1","buch":"Kaputt","changecounter":122}]"#).api.getBooks(after: 0)
         }
     }
 }

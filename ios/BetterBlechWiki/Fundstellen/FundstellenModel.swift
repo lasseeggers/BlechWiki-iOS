@@ -7,7 +7,7 @@ extension ComposerLink {
     var url: URL {
         var components = URLComponents()
         components.scheme = "komponist"
-        components.queryItems = [URLQueryItem(name: "kurz", value: shortName)]
+        components.queryItems = [URLQueryItem(name: "id", value: id)]
         return components.url!
     }
 }
@@ -57,6 +57,9 @@ final class FundstellenModel {
     private(set) var editorLink: ComposerLink?
     private(set) var isRefreshing = false
     private(set) var refreshFailed = false
+    /// Der Server hat geantwortet, aber mit Fehler (HTTP-Status, unlesbare Antwort), etwa bei einem
+    /// gelöschten Buch. Dann liegt es nicht an der Verbindung.
+    private(set) var refreshFailedOnServer = false
     // Fundstellen mit vorab berechneten Suchwörtern, damit das Filtern beim Tippen schnell bleibt
     private var entries: [(fundstelle: Fundstelle, words: [String])] = []
 
@@ -116,10 +119,17 @@ final class FundstellenModel {
     func refresh(force: Bool = true) async {
         isRefreshing = true
         refreshFailed = false
+        refreshFailedOnServer = false
         do {
-            try await container.fundstellen.refresh(route.query, force: force)
+            _ = try await container.sync.withBackgroundTime("Suchergebnisse") {
+                try await container.fundstellen.refresh(route.query, force: force)
+            }
         } catch {
             refreshFailed = true
+            switch error as? BlechWikiError {
+            case .httpError?, .malformedResponse?: refreshFailedOnServer = true
+            default: break
+            }
         }
         isRefreshing = false
     }
@@ -163,7 +173,7 @@ final class FundstellenModel {
         let found = (try? container.search.composerLinks(names: names)) ?? [:]
         // Auf der Seite eines Komponisten führt sein Name nirgendwohin Neues
         composerLinks = found.filter { _, link in
-            if case .byComposer(let shortName) = route.query { link.shortName != shortName } else { true }
+            if case .byComposer(let id) = route.query { link.id != id } else { true }
         }
         editorLink = editorName.flatMap { found[$0] }
     }

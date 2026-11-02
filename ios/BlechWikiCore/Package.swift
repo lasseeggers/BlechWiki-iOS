@@ -1,7 +1,7 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-// Logik der App ohne UI: SOAP-Client, lokale Datenbank, Suche, Inventar.
+// Logik der App ohne UI: REST-Client, lokale Datenbank, Suche, Inventar.
 // Läuft auch auf macOS, damit `swift test` ohne Simulator und ohne Xcode-Projekt geht.
 let package = Package(
     name: "BlechWikiCore",
@@ -17,8 +17,7 @@ let package = Package(
         ),
         .testTarget(
             name: "BlechWikiCoreTests",
-            dependencies: ["BlechWikiCore"],
-            resources: [.copy("Fixtures")]
+            dependencies: ["BlechWikiCore"]
         ),
     ]
 )

@@ -1,6 +1,6 @@
 # Impressum
 
-für die App „BlechWiki“ für iPhone und Android.
+für die App „BlechWiki“ für iPhone, iPad, Mac und Android.
 
 ## Anbieter
 
@@ -22,7 +22,7 @@ Lasse Eggers. Fehler und Wünsche bitte als [Issue auf GitHub](https://github.co
 
 ## Daten
 
-Die Angaben zu Büchern, Liedern und Komponisten stammen von [blechwiki.de](https://www.blechwiki.de/) und [BlechWikiDK](https://github.com/DieterKipp/BlechWikiDK).
+Die Angaben zu Büchern, Liedern und Komponisten und die Titelbilder stammen von [blechwiki.de](https://www.blechwiki.de/).
 
 ## Verbraucherstreitbeilegung
 

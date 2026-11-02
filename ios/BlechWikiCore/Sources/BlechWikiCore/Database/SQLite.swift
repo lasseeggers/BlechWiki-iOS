@@ -2,23 +2,41 @@ import Foundation
 import SQLite3
 
 /// Dünne Hülle um die SQLite-C-API. Nicht threadsicher, Zugriff nur über `AppDatabase`.
+/// Ausnahme ist `interrupt`, das aus jedem Thread aufgerufen werden darf.
 final class SQLiteConnection {
 
     struct Error: Swift.Error, CustomStringConvertible {
         let description: String
+        /// Primärer Fehlercode von SQLite, z. B. `SQLITE_BUSY`.
+        var code: Int32 = SQLITE_ERROR
+
+        /// Datei beschädigt oder keine Datenbank. Hilft nur Löschen und neu Laden.
+        var isCorruption: Bool { code == SQLITE_CORRUPT || code == SQLITE_NOTADB }
     }
 
     private var handle: OpaquePointer?
     private var statements: [String: OpaquePointer] = [:]
+    /// Für `interrupt`, das aus einem anderen Thread kommt.
+    private let interruptLock = NSLock()
+    private var inTransaction = false
+    private var interruptRequested = false
 
-    /// `path` = nil öffnet eine Datenbank im Speicher (Tests).
-    init(path: String?) throws {
+    /// `path` = nil öffnet eine Datenbank im Speicher (Tests). `readOnly` verbietet Änderungen
+    /// über diese Verbindung.
+    init(path: String?, readOnly: Bool = false) throws {
         let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX
         guard sqlite3_open_v2(path ?? ":memory:", &handle, flags, nil) == SQLITE_OK else {
             let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? "unbekannt"
+            let code = handle.map { sqlite3_errcode($0) & 0xFF } ?? SQLITE_CANTOPEN
             sqlite3_close(handle)
-            throw Error(description: "Datenbank lässt sich nicht öffnen: \(message)")
+            throw Error(description: "Datenbank lässt sich nicht öffnen: \(message)", code: code)
         }
+        // App und Share Extension öffnen dieselbe Datei. Hält die eine gerade die Sperre, wartet
+        // die andere, statt sofort mit SQLITE_BUSY abzubrechen.
+        sqlite3_busy_timeout(handle, 5000)
+        // query_only statt SQLITE_OPEN_READONLY, damit die Verbindung im WAL-Modus die -shm-Datei
+        // genauso nutzt wie die Schreibverbindung
+        if readOnly { try execute("PRAGMA query_only = ON") }
     }
 
     deinit {
@@ -32,10 +50,19 @@ final class SQLiteConnection {
 
     /// Führt `sql` mit `args` aus und ruft `row` für jede Ergebniszeile auf.
     func query(_ sql: String, _ args: [SQLValue] = [], row: (Row) throws -> Void) throws {
+        // sqlite3_interrupt trifft nur eine laufende Anweisung. Kommt es zwischen zwei Anweisungen
+        // einer Transaktion, bricht erst diese Prüfung ab.
+        if interruptLock.withLock({ interruptRequested }) {
+            throw Error(description: "Abgebrochen: \(sql)", code: SQLITE_INTERRUPT)
+        }
         let statement = try prepared(sql)
         defer {
-            sqlite3_reset(statement)
-            sqlite3_clear_bindings(statement)
+            if statements[sql] == statement {
+                sqlite3_reset(statement)
+                sqlite3_clear_bindings(statement)
+            } else {
+                sqlite3_finalize(statement)
+            }
         }
         try bind(args, to: statement, sql: sql)
         while true {
@@ -58,6 +85,9 @@ final class SQLiteConnection {
     }
 
     func transaction<T>(_ body: () throws -> T) throws -> T {
+        // Schon vor BEGIN: Ein Abbruch, während BEGIN auf die Share Extension wartet, zählt mit
+        interruptLock.withLock { inTransaction = true; interruptRequested = false }
+        defer { interruptLock.withLock { inTransaction = false; interruptRequested = false } }
         try execute("BEGIN IMMEDIATE")
         do {
             let result = try body()
@@ -69,9 +99,23 @@ final class SQLiteConnection {
         }
     }
 
-    var userVersion: Int {
-        get { (try? rows("PRAGMA user_version") { $0.int(0) }.first) ?? 0 }
-        set { try? execute("PRAGMA user_version = \(newValue)") }
+    /// Bricht die laufende Transaktion ab, sie wird zurückgerollt und wirft `SQLITE_INTERRUPT`.
+    /// Ohne laufende Transaktion wirkungslos.
+    func interrupt() {
+        interruptLock.withLock {
+            guard inTransaction else { return }
+            interruptRequested = true
+            sqlite3_interrupt(handle)
+        }
+    }
+
+    /// Wirft bei Lesefehlern. Als 0 gewertet, würde z. B. eine kurz gesperrte Datei den Cache verwerfen.
+    func userVersion() throws -> Int {
+        try rows("PRAGMA user_version") { $0.int(0) }.first ?? 0
+    }
+
+    func setUserVersion(_ version: Int) throws {
+        try execute("PRAGMA user_version = \(version)")
     }
 
     private func prepared(_ sql: String) throws -> OpaquePointer {
@@ -105,7 +149,7 @@ final class SQLiteConnection {
     }
 
     private func lastError(_ sql: String) -> Error {
-        Error(description: "\(String(cString: sqlite3_errmsg(handle))) in: \(sql)")
+        Error(description: "\(String(cString: sqlite3_errmsg(handle))) in: \(sql)", code: sqlite3_errcode(handle) & 0xFF)
     }
 
     struct Row {

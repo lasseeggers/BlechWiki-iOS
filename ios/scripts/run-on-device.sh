@@ -5,16 +5,16 @@
 #   ios/scripts/run-on-device.sh            Debug-Build
 #   CONFIG=Release ios/scripts/run-on-device.sh
 #
-# Voraussetzung: Apple-Account in Xcode › Einstellungen › Accounts angemeldet (kostenloser
-# Account reicht, Apps laufen dann 7 Tage). Team-ID wird aus dem Zertifikat gelesen oder
-# per TEAM=XXXXXXXXXX vorgegeben.
+# Voraussetzung: Apple-Account in Xcode › Einstellungen › Accounts angemeldet. Team-ID wird aus
+# dem Zertifikat gelesen oder per TEAM=XXXXXXXXXX vorgegeben. Für ein fremdes Team die Bundle-ID
+# im Projekt ändern und hier per BUNDLE_ID=… übergeben (siehe README).
 set -euo pipefail
 
 export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}
 cd "$(dirname "$0")/.."
 
 CONFIG=${CONFIG:-Debug}
-BUNDLE_ID=blechwiki.eggers.media
+BUNDLE_ID=${BUNDLE_ID:-blechwiki.eggers.media}
 
 if [[ -z "${TEAM:-}" ]]; then
   # OU im Zertifikat "Apple Development: …" ist die Team-ID
@@ -43,13 +43,13 @@ mkdir -p build
 xcodebuild -project BetterBlechWiki.xcodeproj -scheme BetterBlechWiki -configuration "$CONFIG" \
   -destination "id=$DEVICE" -derivedDataPath build/DerivedData \
   -allowProvisioningUpdates DEVELOPMENT_TEAM="$TEAM" build > build/xcodebuild.log 2>&1 || {
-  grep -E 'error:' build/xcodebuild.log | sort -u >&2
+  { grep -E 'error:' build/xcodebuild.log || true; } | sort -u >&2
   echo "Build fehlgeschlagen, Log: ios/build/xcodebuild.log" >&2
   exit 1
 }
 grep -E 'warning:' build/xcodebuild.log | grep -v appintents | sort -u || true
 
-APP="build/DerivedData/Build/Products/$CONFIG-iphoneos/BetterBlechWiki.app"
+APP="build/DerivedData/Build/Products/$CONFIG-iphoneos/BlechWiki.app"
 [[ -d "$APP" ]] || { echo "Build fehlgeschlagen" >&2; exit 1; }
 xcrun devicectl device install app --device "$DEVICE" "$APP"
 xcrun devicectl device process launch --device "$DEVICE" "$BUNDLE_ID" \

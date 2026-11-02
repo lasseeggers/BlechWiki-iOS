@@ -4,7 +4,6 @@ import Foundation
 enum SearchIndexBuilder {
 
     static let stammteil = "Stamm"
-    private static let alleAnhaenge = "alleAnhänge"
     private static let maxAppendixNumbers = 3
 
     /// Ein Eintrag pro Lied (`EgSongEntity.ix`), nicht pro EG-Teil.
@@ -23,21 +22,21 @@ enum SearchIndexBuilder {
         }
     }
 
-    /// Titel, die schon als EG-Lied im Index stehen, werden übersprungen.
-    static func titleEntries(_ titles: [String], egSongs: [EgSongEntity]) -> [SearchEntry] {
+    /// Titel, die schon als EG-Lied im Index stehen, werden übersprungen. Gleich lautende Titel
+    /// mit verschiedenem ix (Stand 10/2026: zwei, mit Leerzeichen am Ende) bleiben getrennt,
+    /// weil die API sie getrennt liefert.
+    static func titleEntries(_ titles: [TitleEntity], egSongs: [EgSongEntity]) -> [SearchEntry] {
         let egNorms = Set(egSongs.map { SearchNormalizer.normalize($0.title) })
-        var seen = Set<String>()
         return titles.compactMap { title in
-            let norm = SearchNormalizer.normalize(title)
-            // API vergleicht Titel ohne Groß-/Kleinschreibung, Duplikate nur in der Schreibweise sind dieselbe Abfrage
-            guard !norm.isEmpty, !egNorms.contains(norm), seen.insert(title.lowercased()).inserted else { return nil }
+            let norm = SearchNormalizer.normalize(title.title)
+            guard !norm.isEmpty, !egNorms.contains(norm) else { return nil }
             return SearchEntry(
-                content: SearchNormalizer.indexContent(title),
+                content: SearchNormalizer.indexContent(title.title),
                 norm: norm,
-                label: title,
+                label: title.title,
                 detail: nil,
                 type: .title,
-                refKey: title,
+                refKey: String(title.ix),
                 refNumber: nil
             )
         }
@@ -66,7 +65,7 @@ enum SearchIndexBuilder {
                 label: composer.name,
                 detail: lifeDates(composer),
                 type: .composer,
-                refKey: composer.shortName,
+                refKey: composer.id,
                 refNumber: nil
             )
         }
@@ -80,7 +79,7 @@ enum SearchIndexBuilder {
         if let appendix, let own = variants.first(where: { $0.part.caseInsensitiveCompare(appendix) == .orderedSame }) {
             return "EG \(own.number)"
         }
-        let byNumber = groupedInOrder(variants.filter { $0.part != alleAnhaenge }, by: \.number)
+        let byNumber = groupedInOrder(variants, by: \.number)
             .sorted { $0[0].number < $1[0].number }
         if byNumber.isEmpty { return nil }
         let shown = byNumber.prefix(maxAppendixNumbers).map { group in
@@ -88,6 +87,33 @@ enum SearchIndexBuilder {
             return "\(group[0].number) (\(parts.joined(separator: ", ")))"
         }.joined(separator: " · ")
         return "EG \(shown)" + (byNumber.count > maxAppendixNumbers ? " …" : "")
+    }
+
+    /// Baut den ganzen Index und `fundstellen.titleNorm` aus den lokalen Tabellen neu, ohne Download
+    /// und ohne den Fundstellen-Cache zu verwerfen. Nötig, wenn sich `SearchNormalizer` ändert:
+    /// Alte Einträge passen sonst nicht mehr zu neuen Anfragen. Wie `SearchIndexMigration` auf Android.
+    static func rebuild(_ db: SQLiteConnection) throws {
+        let egSongs = try db.rows("SELECT ix, ixUr, title, part, number, occasion FROM eg_songs ORDER BY id") {
+            EgSongEntity(ix: $0.int(0), ixUr: $0.int(1), title: $0.text(2), part: $0.text(3), number: $0.int(4), occasion: $0.textOrNil(5))
+        }
+        let titles = try db.rows("SELECT ix, title FROM titles") { TitleEntity(ix: $0.int(0), title: $0.text(1)) }
+        let books = try db.rows("SELECT id, title, subtitle, year, editor, publisher, publisherNumber, coverUrl FROM books") {
+            BookEntity(
+                id: $0.text(0), title: $0.text(1), subtitle: $0.textOrNil(2), year: $0.intOrNil(3), editor: $0.textOrNil(4),
+                publisher: $0.textOrNil(5), publisherNumber: $0.textOrNil(6), coverUrl: $0.textOrNil(7)
+            )
+        }
+        let composers = try db.rows("SELECT id, name, born, died FROM composers") {
+            ComposerEntity(id: $0.text(0), name: $0.text(1), born: $0.textOrNil(2), died: $0.textOrNil(3))
+        }
+        try db.execute("DELETE FROM search_index")
+        try AppDatabase.insertSearchEntries(
+            db,
+            egSongEntries(egSongs) + titleEntries(titles, egSongs: egSongs) + bookEntries(books) + composerEntries(composers)
+        )
+        for title in try db.rows("SELECT DISTINCT title FROM fundstellen", map: { $0.text(0) }) {
+            try db.run("UPDATE fundstellen SET titleNorm = ? WHERE title = ?", [.text(SearchNormalizer.normalize(title)), .text(title)])
+        }
     }
 
     static func lifeDates(_ composer: ComposerEntity) -> String? {

@@ -72,6 +72,7 @@ struct HymnalView: View {
                 }
             }
             .listStyle(.plain)
+            .readableWidth()
             .toolbar {
                 // Rund 40 Anlässe und 600 Lieder: Ohne Sprungmöglichkeit wäre „Abend“ weit unten
                 ToolbarItem(placement: .topBarTrailing) {
@@ -102,15 +103,11 @@ private struct OccasionMenu: View {
     var body: some View {
         Menu {
             ForEach(sections) { section in
-                Button {
-                    onSelect(section.occasion)
-                } label: {
+                // Als Schalter: Das Menü zeigt den Haken selbst, und VoiceOver liest den aktuellen
+                // Anlass als ausgewählt vor. Ein Haken als Bild bliebe stumm.
+                Toggle(isOn: Binding(get: { section.occasion == current }, set: { _ in onSelect(section.occasion) })) {
                     // Zweiter Text erscheint im Menü als Untertitel
-                    if section.occasion == current {
-                        Label(section.occasion, systemImage: "checkmark")
-                    } else {
-                        Text(section.occasion)
-                    }
+                    Text(section.occasion)
                     Text(numbersLabel(section))
                 }
             }

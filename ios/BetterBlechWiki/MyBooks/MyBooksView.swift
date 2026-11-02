@@ -3,16 +3,28 @@ import SwiftUI
 
 struct MyBooksView: View {
 
-    @State private var model: MyBooksModel
+    let container: AppContainer
+    @State private var box = ModelBox<MyBooksModel>()
 
     init(container: AppContainer) {
-        _model = State(initialValue: MyBooksModel(container: container))
+        self.container = container
+    }
+
+    private var model: MyBooksModel {
+        box { MyBooksModel(container: container) }
     }
 
     var body: some View {
+        @Bindable var model = model
         Group {
             if let sections = model.sections {
                 bookList(sections)
+            } else if model.sectionsFailed {
+                ContentUnavailableView {
+                    Label("Nicht geladen", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text("Die Bücherliste konnte nicht gelesen werden. Bitte BlechWiki schließen und neu öffnen.")
+                }
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -20,6 +32,7 @@ struct MyBooksView: View {
         .navigationTitle("Inventar")
         .appSearchable(text: $model.filter, prompt: "Buch suchen")
         .autocorrectionDisabled()
+        .textInputAutocapitalization(.never)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if let message = model.shareMessage {
@@ -44,7 +57,8 @@ struct MyBooksView: View {
     }
 
     private func bookList(_ sections: BookSections) -> some View {
-        List {
+        @Bindable var model = model
+        return List {
             Section {
                 Picker("Anzeige", selection: $model.onlySelected) {
                     Text("Alle Bücher").tag(false)
@@ -89,6 +103,7 @@ struct MyBooksView: View {
             }
         }
         .listStyle(.plain)
+        .readableWidth()
         .scrollDismissesKeyboard(.immediately)
     }
 
@@ -155,7 +170,9 @@ private struct ImportSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("BBW-…", text: Binding(get: { model.importText ?? "" }, set: { model.importText = $0 }), axis: .vertical)
+                    // Auf dem Mac schreibt das Feld beim Schließen seinen Text noch einmal zurück. Ohne die
+                    // Prüfung wäre importText danach wieder gesetzt und der Dialog ginge sofort neu auf
+                    TextField("BBW-…", text: Binding(get: { model.importText ?? "" }, set: { if model.importText != nil { model.importText = $0 } }), axis: .vertical)
                         .lineLimit(1...4)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.characters)

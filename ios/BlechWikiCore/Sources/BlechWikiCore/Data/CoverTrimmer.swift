@@ -28,15 +28,12 @@ public enum CoverTrimmer {
         let scale = min(1, Double(analysisSize) / Double(max(image.width, image.height)))
         let w = max(1, Int(Double(image.width) * scale))
         let h = max(1, Int(Double(image.height) * scale))
-        var pixels = [UInt8](repeating: 255, count: w * h * 4)
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
         let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
             guard let ctx = CGContext(
                 data: buffer.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
                 space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             ) else { return false }
-            // Transparenz zählt als Weiß
-            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-            ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
             ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
             return true
         }
@@ -46,8 +43,7 @@ public enum CoverTrimmer {
         var columnCounts = [Int](repeating: 0, count: w)
         for y in 0..<h {
             for x in 0..<w {
-                let i = (y * w + x) * 4
-                if pixels[i] < whiteThreshold || pixels[i + 1] < whiteThreshold || pixels[i + 2] < whiteThreshold {
+                if !isWhite(pixels, at: (y * w + x) * 4) {
                     rowCounts[y] += 1
                     columnCounts[x] += 1
                 }
@@ -66,5 +62,14 @@ public enum CoverTrimmer {
             width: Double(right - left + 1) * sx,
             height: Double(bottom - top + 1) * sy
         ).intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    }
+
+    /// Wie `CoverTrim.isWhite` auf Android: Pixel unter halber Deckkraft zählen als Weiß, sonst
+    /// entscheidet die Farbe ohne Transparenz. `pixels` ist RGBA mit vormultipliziertem Alpha.
+    private static func isWhite(_ pixels: [UInt8], at i: Int) -> Bool {
+        let alpha = Int(pixels[i + 3])
+        if alpha < 128 { return true }
+        let threshold = Int(whiteThreshold)
+        return (0..<3).allSatisfy { (Int(pixels[i + $0]) * 255 + alpha / 2) / alpha >= threshold }
     }
 }

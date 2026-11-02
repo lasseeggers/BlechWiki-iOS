@@ -26,8 +26,8 @@ public enum InventoryCode {
     public static func encode(_ bookIds: [String], catalog: [String]) -> String {
         precondition(!bookIds.isEmpty, "Leeres Inventar")
         let ids = unique(bookIds)
-        let idSet = Set(ids)
-        let others = unique(catalog).filter { !idSet.contains($0) }
+        let idSet = Set(ids.map(bytes))
+        let others = unique(catalog).filter { !idSet.contains(bytes($0)) }
         let seed = (0..<seedCount).first { seed in
             let own = ids.map { hash(seed, $0) }
             let ownSet = Set(own)
@@ -38,18 +38,45 @@ public enum InventoryCode {
         return prefix + groups.map { "-" + group($0) }.joined()
     }
 
-    /// Der erste Code in `text`, auch mitten in einer weitergeleiteten Nachricht.
+    /// Der Code in `text` (bei mehreren der wahrscheinlichste, siehe `candidates`), auch mitten in
+    /// einer weitergeleiteten Nachricht. Andere Striche, Zeilenumbrüche und Zitatzeichen zwischen den
+    /// Gruppen sind entfernt: "BBW–0RJT—\n> GA6Y" → "BBW-0RJT-GA6Y". Gruppen nur mit Leerraum davor
+    /// bleiben so getrennt.
     public static func find(_ text: String) -> String? {
-        let upper = text.uppercased()
-        let range = NSRange(upper.startIndex..., in: upper)
-        guard let match = pattern.firstMatch(in: upper, range: range), let r = Range(match.range, in: upper) else { return nil }
-        return String(upper[r])
+        candidates(in: text).first.map { groups in prefix + groups.map { ($0.dashed ? "-" : " ") + $0.text }.joined() }
     }
 
     public static func decode(_ text: String, catalog: [String]) -> Result {
-        guard let code = find(text) else { return .notFound }
+        // Steht vor dem Code noch Text wie "BBW Chor gibt", zählt der Code, der ganz aufgeht
+        var first: Result?
+        for groups in candidates(in: text) {
+            let result = decode(groups, catalog: catalog)
+            if case .valid(_, 0) = result { return result }
+            first = first ?? result
+        }
+        return first ?? .notFound
+    }
+
+    private static func decode(_ groups: [Group], catalog: [String]) -> Result {
+        // Ein Wort aus vier Zeichen hinter dem Code, nur durch Leerraum getrennt ("… GA6Y Euer Chor"),
+        // sieht aus wie eine weitere Gruppe. Solche Gruppen am Ende probeweise weglassen, höchstens
+        // `maxTrailingWords`, damit langer Text aus lauter solchen Wörtern nicht ewig dauert.
+        var count = groups.count
+        while true {
+            let result = resolve(groups.prefix(count).map(\.text), catalog: catalog)
+            if case .valid(_, 0) = result { return result }
+            if count <= 2 || groups[count - 1].dashed || groups.count - count >= maxTrailingWords { break }
+            count -= 1
+        }
+        // Geht der Code nicht ganz auf, zählen nur die Gruppen bis zum letzten Strich. Ohne Striche
+        // lässt sich ein Code nicht sicher von Text unterscheiden.
+        let dashedCount = (groups.lastIndex(where: \.dashed) ?? -1) + 1
+        return dashedCount >= 2 ? resolve(groups.prefix(dashedCount).map(\.text), catalog: catalog) : .invalid
+    }
+
+    private static func resolve(_ groups: [String], catalog: [String]) -> Result {
         var values: [Int] = []
-        for part in code.dropFirst(prefix.count).split(whereSeparator: { $0 == "-" || $0 == "–" }) {
+        for part in groups {
             guard let value = parseGroup(part) else { return .invalid }
             values.append(value)
         }
@@ -85,8 +112,12 @@ public enum InventoryCode {
 
     private static func combinations(_ candidates: [[String]]) -> [[String]] {
         // Mehrdeutige Hashes sind selten. Die Grenze verhindert eine Explosion bei vielen davon.
-        let count = candidates.reduce(1) { $0 * $1.count }
-        if count > maxCombinations { return [] }
+        // Schrittweise prüfen: Das ganze Produkt liefe bei sehr vielen davon über.
+        var count = 1
+        for options in candidates {
+            count *= options.count
+            if count > maxCombinations { return [] }
+        }
         return candidates.reduce([[]]) { acc, options in
             acc.flatMap { prefix in options.map { prefix + [$0] } }
         }
@@ -96,7 +127,44 @@ public enum InventoryCode {
         String((0..<groupLength).reversed().map { alphabet[(value >> ($0 * 5)) & 31] })
     }
 
-    private static func parseGroup(_ text: Substring) -> Int? {
+    private struct Group {
+        var text: String
+        /// Vor der Gruppe steht ein Strich, nicht nur Leerraum.
+        var dashed: Bool
+    }
+
+    /// Mögliche Codes in `text`, der wahrscheinlichste zuerst: geschrieben wie von der App ("BBW-…"),
+    /// dann mit mehreren Gruppen, sonst in der Reihenfolge im Text. Eine einzelne Gruppe nur hinter
+    /// Leerraum ("BBW Chor") gilt nicht als Code.
+    private static func candidates(in text: String) -> [[Group]] {
+        let upper = text.uppercased()
+        let candidates = pattern.matches(in: upper, range: NSRange(upper.startIndex..., in: upper)).compactMap { match -> [Group]? in
+            guard let r = Range(match.range, in: upper) else { return nil }
+            var groups: [Group] = []
+            var current = String.UnicodeScalarView()
+            var dashed = false
+            for scalar in upper[r].unicodeScalars.dropFirst(prefix.count) {
+                if ("0"..."9").contains(scalar) || ("A"..."Z").contains(scalar) {
+                    current.append(scalar)
+                    if current.count == groupLength {
+                        groups.append(Group(text: String(current), dashed: dashed))
+                        current = String.UnicodeScalarView()
+                        dashed = false
+                    }
+                } else if dashes.contains(scalar) {
+                    dashed = true
+                }
+            }
+            return groups.count >= 2 || groups.first?.dashed == true ? groups : nil
+        }
+        func rank(_ groups: [Group]) -> Int { groups.count < 2 ? 2 : groups[0].dashed ? 0 : 1 }
+        // Stabil sortiert wie `sortedBy` in Kotlin
+        return candidates.enumerated()
+            .sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }
+            .map(\.element)
+    }
+
+    private static func parseGroup(_ text: String) -> Int? {
         guard text.count == groupLength else { return nil }
         var value = 0
         for c in text {
@@ -118,10 +186,19 @@ public enum InventoryCode {
     private static func nfc(_ text: String) -> String { text.precomposedStringWithCanonicalMapping }
 
     /// Duplikate entfernen, Reihenfolge des ersten Auftretens behalten.
-    private static func unique<T: Hashable>(_ items: [T]) -> [T] {
-        var seen = Set<T>()
+    private static func unique(_ items: [Int]) -> [Int] {
+        var seen = Set<Int>()
         return items.filter { seen.insert($0).inserted }
     }
+
+    /// Wie `unique`, aber Byte für Byte wie `toSet()` in Kotlin. Swift hielte "ä" und "a" + Trema
+    /// für gleich, und beide Apps bauten verschiedene Codes.
+    private static func unique(_ items: [String]) -> [String] {
+        var seen = Set<[UInt8]>()
+        return items.filter { seen.insert(bytes($0)).inserted }
+    }
+
+    private static func bytes(_ text: String) -> [UInt8] { Array(text.utf8) }
 
     private static let prefix = "BBW"
     private static let alphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
@@ -131,7 +208,15 @@ public enum InventoryCode {
     private static let checksumBits = 15
     private static let seedCount = 32
     private static let maxCombinations = 256
+    private static let maxTrailingWords = 5
 
-    // Gruppen mit Bindestrich (auch Halbgeviertstrich nach Autokorrektur), ohne angehängte Buchstaben
-    private static let pattern = try! NSRegularExpression(pattern: "BBW(?:[-–][0-9A-Z]{4}(?![0-9A-Z]))+")
+    // Bindestrich, geschützter Bindestrich, Halbgeviert- und Geviertstrich (Autokorrektur), Minuszeichen
+    private static let dashes: Set<Unicode.Scalar> = ["-", "\u{2011}", "\u{2013}", "\u{2014}", "\u{2212}"]
+    // Leerraum als feste Liste (Unicode White_Space), weil \s in ICU und Java Verschiedenes meint
+    private static let space = #"\t-\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000"#
+    // Gruppen mit Strich und/oder Leerraum davor, danach auch Zeilenumbruch und Zitatzeichen
+    // umgebrochener Mails ("-\n> "), ohne angehängte Buchstaben. Gleich in InventoryCode.kt.
+    private static let pattern = try! NSRegularExpression(
+        pattern: #"BBW(?:(?:[\#(space)]*[\-\u2011\u2013\u2014\u2212]|[\#(space)])[\#(space)>]*[0-9A-Z]{4}(?![0-9A-Z]))+"#
+    )
 }

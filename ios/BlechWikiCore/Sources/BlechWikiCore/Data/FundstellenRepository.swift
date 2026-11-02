@@ -50,14 +50,19 @@ public actor FundstellenRepository {
     }
 
     private func load(_ query: FundstellenQuery, key: String, force: Bool) async throws -> Bool {
-        let titleVersion = try db.syncState()?.lastTitleNumber
+        let titleVersion = try db.syncState()?.titleChangeCounter
         if !force, isFresh(try db.fetchState(queryKey: key), currentTitleVersion: titleVersion) { return false }
 
         let dtos = try await fetch(query)
+        // Die API liefert den Untertitel nicht mit, er kommt aus den Stammdaten
+        let subtitles = Dictionary(
+            try db.books(ids: Array(Set(dtos.map(\.bookId)))).map { ($0.id, $0.subtitle) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let entities = dtos.enumerated().map { index, dto in
             FundstelleEntity(
                 queryKey: key, position: index, bookId: dto.bookId, bookTitle: dto.bookTitle,
-                bookSubtitle: dto.bookSubtitle, number: dto.number, title: dto.title,
+                bookSubtitle: subtitles[dto.bookId] ?? nil, number: dto.number, title: dto.title,
                 titleNorm: SearchNormalizer.normalize(dto.title), addition: dto.addition,
                 composer: dto.composer, scoring: dto.scoring, keySignature: dto.keySignature, coverUrl: dto.coverUrl
             )
@@ -70,15 +75,16 @@ public actor FundstellenRepository {
     private func isFresh(_ state: FetchState?, currentTitleVersion: Int?) -> Bool {
         guard let state else { return false }
         let ageMillis = Int(now().timeIntervalSince1970 * 1000) - state.fetchedAtMillis
-        return ageMillis < Int(Self.maxAge * 1000) && state.titleVersion == currentTitleVersion
+        // Abrufzeit in der Zukunft (Uhr war verstellt): sonst bliebe der Eintrag bis dahin frisch
+        return ageMillis >= 0 && ageMillis < Int(Self.maxAge * 1000) && state.titleVersion == currentTitleVersion
     }
 
     private func fetch(_ query: FundstellenQuery) async throws -> [FundstelleDto] {
         switch query {
-        case .byTitle(let title): try await api.getFundstellenByTitle(title)
+        case .byTitle(let ix): try await api.getFundstellenByTitle(ix)
         case .byEgMelody(let ixUr): try await api.getFundstellenByEgSong(ixUr)
         case .byBook(let bookId): try await api.getFundstellenByBook(bookId)
-        case .byComposer(let shortName): try await api.getFundstellenByComposer(shortName)
+        case .byComposer(let id): try await api.getFundstellenByComposer(id)
         }
     }
 }

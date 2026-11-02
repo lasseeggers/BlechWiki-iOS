@@ -33,17 +33,37 @@ enum SearchNormalizer {
     }
 
     /// FTS-MATCH-Ausdruck: jedes Wort als Präfix, alle Wörter müssen vorkommen. `nil` bei leerer Anfrage.
+    /// Jedes Wort nur einmal und höchstens `maxQueryWords`: Einige Tausend Wörter sprengen sonst
+    /// den Ausdrucksbaum von FTS ("expression tree is too large").
     static func matchExpression(_ query: String) -> String? {
-        let tokens = normalize(query).split(separator: " ")
+        var seen = Set<Substring>()
+        let tokens = normalize(query).split(separator: " ").filter { seen.insert($0).inserted }.prefix(maxQueryWords)
         return tokens.isEmpty ? nil : tokens.map { "\($0)*" }.joined(separator: " ")
     }
 
-    /// Zerlegt Akzente (NFD), entfernt Kombinationszeichen und ersetzt alles außer a–z und 0–9
-    /// durch ein Leerzeichen. Gleiche Regeln wie `Normalizer` + `\p{Mn}` auf Android.
+    static let maxQueryWords = 16
+
+    /// Buchstaben, die NFD nicht in Grundbuchstabe und Akzent zerlegt. Ohne Ersatz würden sie zu
+    /// Wortgrenzen ("Søren" → "s ren"). Erwartet Kleinbuchstaben.
+    private static let letterReplacements: [Unicode.Scalar: String] = [
+        "æ": "ae", "ø": "o", "œ": "oe", "ł": "l", "đ": "d", "ı": "i",
+        "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st",
+    ]
+
+    /// Ersetzt `letterReplacements`, zerlegt Akzente (NFD), entfernt Kombinationszeichen und ersetzt
+    /// alles außer a–z und 0–9 durch ein Leerzeichen. Gleiche Regeln wie `Normalizer` + `\p{Mn}` auf Android.
     private static func fold(_ text: String) -> String {
+        var replaced = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars {
+            if let replacement = letterReplacements[scalar] {
+                replaced.append(contentsOf: replacement.unicodeScalars)
+            } else {
+                replaced.append(scalar)
+            }
+        }
         var result = String.UnicodeScalarView()
         var pendingSpace = false
-        for scalar in text.decomposedStringWithCanonicalMapping.unicodeScalars {
+        for scalar in String(replaced).decomposedStringWithCanonicalMapping.unicodeScalars {
             if scalar.properties.generalCategory == .nonspacingMark { continue }
             let v = scalar.value
             if (v >= 0x61 && v <= 0x7A) || (v >= 0x30 && v <= 0x39) {

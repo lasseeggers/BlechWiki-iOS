@@ -53,8 +53,12 @@ enum HymnalSections {
     }
 
     /// Anlass ist in der API teils mit Zeilenumbruch oder doppelten Leerzeichen gespeichert.
+    /// Leerraum im Sinne von Unicode (auch geschütztes Leerzeichen), wie `WHITESPACE` auf Android.
     private static func occasion(_ song: EgSongEntity) -> String {
-        let cleaned = (song.occasion ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let cleaned = (song.occasion ?? "").unicodeScalars
+            .split(whereSeparator: \.properties.isWhitespace)
+            .map { String(String.UnicodeScalarView($0)) }
+            .joined(separator: " ")
         return cleaned.isEmpty ? fallbackOccasion : cleaned
     }
 }

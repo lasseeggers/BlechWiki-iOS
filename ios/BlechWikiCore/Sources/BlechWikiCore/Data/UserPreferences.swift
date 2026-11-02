@@ -48,6 +48,8 @@ public final class UserPreferences: @unchecked Sendable {
 
     private enum Keys {
         static let egAppendix = "eg_appendix"
-        static let ownedBooks = "owned_books"
+        // Bis 0.6.1 standen unter "owned_books" die Kurznamen der SOAP-API. Neuer Schlüssel
+        // statt Migration, vor 1.0 durfte das Inventar verloren gehen.
+        static let ownedBooks = "owned_book_ids"
     }
 }

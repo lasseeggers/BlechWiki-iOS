@@ -2,18 +2,24 @@ import Foundation
 import Testing
 @testable import BlechWikiCore
 
-/// Gegen die echten Server, nur mit `BLECHWIKI_LIVE=1`. Beide Server sind privat betrieben,
-/// daher nur gezielt ausführen.
+/// Gegen den echten, privat betriebenen Server, nur mit `BLECHWIKI_LIVE=1`. Lädt keine ganze Tabelle.
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["BLECHWIKI_LIVE"] == "1"))
 struct LiveTests {
 
-    /// URLSession muss den Umlaut im SOAPAction-Header so schicken, dass der Server die Methode findet.
-    @Test func methodeMitUmlaut() async throws {
-        let appendices = try await SoapBlechWikiAPI().getEgAppendices()
-        #expect(appendices.contains { $0.code == "NB" })
+    @Test func aenderungsprotokollDerTitelLiefertIxUndZaehler() async throws {
+        let titles = try await JsonBlechWikiAPI().getTitles(after: 60).rows
+        #expect(!titles.isEmpty)
+        #expect(titles.allSatisfy { $0.ix > 0 && $0.changeCounter > 60 })
     }
 
-    @Test func restAenderungsprotokollDerBuecherIstNichtLeer() async throws {
-        #expect((try await JsonBlechWikiRestAPI().getLatestChange(.books, after: 1) ?? 0) > 1)
+    @Test func eg316HatFundstellenUnterDerMelodie859() async throws {
+        let fundstellen = try await JsonBlechWikiAPI().getFundstellenByEgSong(859)
+        #expect(fundstellen.count > 100)
+        #expect(fundstellen.allSatisfy { Int($0.bookId) != nil })
+    }
+
+    @Test func fundstellenEinesBuchsUeberDieNumerischeId() async throws {
+        let fundstellen = try await JsonBlechWikiAPI().getFundstellenByBook("4035")
+        #expect(Set(fundstellen.map(\.bookTitle)) == ["Bläsermusik 2025 - Württemberg"])
     }
 }

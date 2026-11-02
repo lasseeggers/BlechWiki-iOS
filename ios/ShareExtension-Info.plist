@@ -6,12 +6,10 @@
 	<dict>
 		<key>NSExtensionAttributes</key>
 		<dict>
+			<!-- Nachrichten aus Messengern kommen als Text, Textdateien aus „Dateien“ als Datei vom Typ
+			     Text. Beides passt auf public.plain-text, Bilder, PDFs usw. nicht. -->
 			<key>NSExtensionActivationRule</key>
-			<dict>
-				<!-- Nachrichten aus Messengern kommen als Text -->
-				<key>NSExtensionActivationSupportsText</key>
-				<true/>
-			</dict>
+			<string>SUBQUERY(extensionItems, $item, SUBQUERY($item.attachments, $attachment, ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.plain-text").@count &gt;= 1).@count &gt;= 1</string>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.share-services</string>

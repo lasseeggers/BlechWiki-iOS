@@ -23,7 +23,7 @@ enum RegionKeywords {
         "W": ["wurttemberg", "wurttembergisch"],
     ]
 
-    /// `normalizedText` wie von `SearchNormalizer.normalize`.
+    /// `normalizedText` wie von `SearchNormalizer.normalize` oder `indexContent`.
     static func matches(_ normalizedText: String, appendixCode: String) -> Bool {
         let code = appendixCode.uppercased()
         guard let words = keywords[code] else { return false }
@@ -35,10 +35,10 @@ enum RegionKeywords {
     }
 }
 
-/// Die API liefert nur das kleinste Cover (`…/BilderBuch/mini60/<BuchId>.jpg`, 42 × 60 px).
-/// Auf dem Bildserver liegen daneben `mini120/` (83 × 120 px, ca. 24 KB) und das Original
-/// direkt unter `BilderBuch/` (ca. 1000 × 1444 px, ca. 200 KB). Nicht dokumentiert, daher
-/// sollten Aufrufer bei einem Ladefehler auf die API-URL zurückfallen.
+/// Die Netzwerkschicht liefert das kleinste Cover (`…/BilderBuch/mini60/<Kurzname>.jpg`,
+/// 42 × 60 px). Laut Betreiber gibt es jedes Cover außerdem als `mini120/` (83 × 120 px,
+/// ca. 24 KB), `mini240/` und im Original direkt unter `BilderBuch/` (ca. 1000 × 1444 px,
+/// ca. 200 KB). Aufrufer sollten bei einem Ladefehler auf die `mini60`-URL zurückfallen.
 public enum CoverUrls {
 
     private static let apiSize = "/mini60/"

@@ -2,19 +2,20 @@ import Foundation
 
 /// Was die Fundstellen-Ansicht laden soll. `cacheKey` identifiziert den Eintrag im Cache.
 public enum FundstellenQuery: Hashable, Sendable {
-    /// Exakter Titel. Groß-/Kleinschreibung egal, wie bei der API.
-    case byTitle(String)
+    /// `ix` des Titels.
+    case byTitle(Int)
     /// Alle Sätze zu einer EG-Melodie, auch unter anderen Liedtexten.
     case byEgMelody(Int)
     case byBook(String)
+    /// `id` des Komponisten.
     case byComposer(String)
 
     public var cacheKey: String {
         switch self {
-        case .byTitle(let title): "title:\(title.lowercased())"
+        case .byTitle(let ix): "title:\(ix)"
         case .byEgMelody(let ixUr): "eg:\(ixUr)"
         case .byBook(let bookId): "book:\(bookId)"
-        case .byComposer(let shortName): "composer:\(shortName)"
+        case .byComposer(let id): "composer:\(id)"
         }
     }
 }
@@ -62,7 +63,7 @@ public struct Fundstelle: Hashable, Sendable {
 /// Komponist, auf dessen Suchergebnisse ein Name verlinkt. `lifeDates` wie im Komponisten-Treffer der Suche.
 public struct ComposerLink: Hashable, Sendable {
     public var name: String
-    public var shortName: String
+    public var id: String
     public var lifeDates: String?
 }
 
@@ -125,7 +126,7 @@ public struct BookItem: Hashable, Sendable, Identifiable {
     public var publisherNumber: String?
     public var coverUrl: String?
     public var isOwned: Bool
-    /// Normalisierter Text aus Titel, Untertitel, Herausgeber und Verlag, zum Filtern.
+    /// Titel, Untertitel, Herausgeber und Verlag wie von `SearchNormalizer.indexContent`, zum Filtern.
     public var searchText: String
 }
 

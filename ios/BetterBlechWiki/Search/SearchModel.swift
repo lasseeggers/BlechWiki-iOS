@@ -19,20 +19,28 @@ final class SearchModel {
         didSet { if query != oldValue { scheduleSearch(delay: .milliseconds(50)) } }
     }
     private(set) var results = SearchResults()
+    /// Eingabe, zu der `results` gehören. Bis die Suche zur aktuellen Eingabe fertig ist, stehen
+    /// noch die Treffer der vorigen da. „Keine Treffer“ gilt erst, wenn beide übereinstimmen.
+    private(set) var resultsQuery = ""
     private(set) var start = StartState()
     private var hasData = true
 
     private let container: AppContainer
     @ObservationIgnored private var searchTask: Task<Void, Never>?
 
-    init(container: AppContainer) {
+    /// `query`: Suchtext, der beim letzten Beenden im Feld stand.
+    init(container: AppContainer, query: String = "") {
         self.container = container
+        self.query = query
         #if DEBUG
         // Für Screenshots im Simulator: SIMCTL_CHILD_BBW_QUERY="lob herr" xcrun simctl launch …
         if let query = ProcessInfo.processInfo.environment["BBW_QUERY"] { self.query = query }
         #endif
         reload()
     }
+
+    /// Ob `results` zur aktuellen Eingabe gehören.
+    var resultsAreCurrent: Bool { resultsQuery == query }
 
     var initialLoad: InitialLoad {
         if hasData { return .ready }
@@ -72,7 +80,10 @@ final class SearchModel {
             if delay > .zero { try? await Task.sleep(for: delay) }
             if Task.isCancelled { return }
             let results = await Task.detached { (try? repository.search(query)) ?? SearchResults() }.value
-            if !Task.isCancelled { self.results = results }
+            if !Task.isCancelled {
+                self.results = results
+                self.resultsQuery = query
+            }
         }
     }
 }

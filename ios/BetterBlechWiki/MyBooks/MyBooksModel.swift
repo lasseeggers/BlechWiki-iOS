@@ -15,6 +15,8 @@ final class MyBooksModel {
     var onlySelected = false
 
     private(set) var sections: BookSections?
+    /// Die Bücherliste ließ sich nicht aus der Datenbank lesen.
+    private(set) var sectionsFailed = false
     private(set) var offline = OfflineStatus(owned: 0, available: 0)
     private(set) var selectedAppendix: EgAppendix?
     /// Nachrichtentext zum Teilen, `nil` bei leerem Inventar.
@@ -26,8 +28,22 @@ final class MyBooksModel {
     }
     /// Import ersetzt das bisherige Inventar, statt es zu ergänzen.
     var replaceInventory = false
-    private(set) var importPreview: InventoryImport?
+    private var decodedImport: InventoryImport?
     private(set) var catalogCheck = CatalogCheck.notStarted
+    /// Zählt geöffnete Dialoge. Ein Abgleich aus einem schon geschlossenen Dialog schreibt sein
+    /// Ergebnis nicht in den neuen.
+    @ObservationIgnored private var importGeneration = 0
+
+    /// Auswertung des Codes für den Dialog. Ist nach dem Abgleich (oder ohne Netz) weiterhin kein
+    /// einziges Buch des Codes bekannt, ist der Code beschädigt, meist ein Tippfehler im Kopf. Dann
+    /// nicht „BlechWiki ist gerade nicht erreichbar“ melden, sondern wie bei einem ungültigen Code.
+    var importPreview: InventoryImport? {
+        if case let .ready(books, unknown) = decodedImport, books.isEmpty, unknown > 0,
+           catalogCheck == .done || catalogCheck == .failed {
+            return .invalid
+        }
+        return decodedImport
+    }
 
     private let container: AppContainer
 
@@ -47,9 +63,10 @@ final class MyBooksModel {
     }
 
     func openImport() {
-        importText = ""
-        replaceInventory = false
+        importGeneration += 1
         catalogCheck = .notStarted
+        replaceInventory = false
+        importText = ""
     }
 
     /// Aus einer ganzen Nachricht nur den Code ins Feld übernehmen.
@@ -58,6 +75,7 @@ final class MyBooksModel {
     }
 
     func closeImport() {
+        importGeneration += 1
         importText = nil
         catalogCheck = .notStarted
     }
@@ -74,29 +92,37 @@ final class MyBooksModel {
         offline = (try? container.myBooks.offlineStatus()) ?? OfflineStatus(owned: 0, available: 0)
         selectedAppendix = try? container.settings.selectedEgAppendix()
         shareMessage = (try? container.myBooks.inventoryCode()).flatMap { $0 }.map { code in
+            // „Inventar übernehmen“ heißt das Teilen-Ziel auf beiden Plattformen
             "Inventar für BlechWiki, \(booksLabel(offline.owned)).\n" +
-                "Übernehmen: Nachricht an BlechWiki teilen oder in der App unter Inventar › Inventar-Code einfügen.\n\n\(code)"
+                "Übernehmen: Diese Nachricht teilen und als Ziel „Inventar übernehmen“ wählen, oder in BlechWiki im Inventar „Inventar-Code einfügen“ wählen.\n\n\(code)"
         }
         reloadSections()
         reloadImport()
     }
 
     private func reloadSections() {
-        sections = try? container.myBooks.sections(filter: filter)
+        do {
+            sections = try container.myBooks.sections(filter: filter)
+            sectionsFailed = false
+        } catch {
+            sectionsFailed = true
+        }
     }
 
     private func reloadImport() {
         guard let text = importText else {
-            importPreview = nil
+            decodedImport = nil
             return
         }
-        importPreview = try? container.myBooks.inventoryImport(text)
+        decodedImport = try? container.myBooks.inventoryImport(text)
         // Höchstens ein Abgleich pro geöffnetem Dialog
-        if case let .ready(_, unknown) = importPreview, unknown > 0, catalogCheck == .notStarted {
+        if case let .ready(_, unknown) = decodedImport, unknown > 0, catalogCheck == .notStarted {
             catalogCheck = .running
+            let generation = importGeneration
             Task {
                 let ok = await container.sync.checkCatalogNow()
-                if catalogCheck == .running { catalogCheck = ok ? .done : .failed }
+                guard generation == importGeneration, catalogCheck == .running else { return }
+                catalogCheck = ok ? .done : .failed
             }
         }
     }

@@ -90,30 +90,31 @@ public final class SearchRepository: Sendable {
     public func composerLinks(names: some Collection<String>) throws -> [String: ComposerLink] {
         let entities = try db.composers(names: Array(Set(names)))
         return Dictionary(entities.map {
-            ($0.name, ComposerLink(name: $0.name, shortName: $0.shortName, lifeDates: SearchIndexBuilder.lifeDates($0)))
+            ($0.name, ComposerLink(name: $0.name, id: $0.id, lifeDates: SearchIndexBuilder.lifeDates($0)))
         }, uniquingKeysWith: { first, _ in first })
     }
 
     private func toResult(_ hit: SearchHit) -> SearchResult {
         let query: FundstellenQuery = switch hit.type {
         case .egSong: .byEgMelody(hit.refNumber ?? 0)
-        case .title: .byTitle(hit.refKey)
+        case .title: .byTitle(Int(hit.refKey) ?? 0)
         case .book: .byBook(hit.refKey)
         case .composer: .byComposer(hit.refKey)
         }
         return SearchResult(label: hit.label, detail: hit.detail, query: query)
     }
 
-    /// "316", "EG 316", "eg316"
+    /// "316", "EG 316", "eg316", "EG-316", "„316“". Auf der normalisierten Anfrage, damit Satzzeichen
+    /// und Leerraum wie auf Android zählen.
     static func egNumber(_ query: String) -> Int? {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let range = NSRange(trimmed.startIndex..., in: trimmed)
-        guard let match = egNumberPattern.firstMatch(in: trimmed, range: range),
-              let r = Range(match.range(at: 1), in: trimmed) else { return nil }
-        return Int(trimmed[r])
+        let norm = SearchNormalizer.normalize(query)
+        let range = NSRange(norm.startIndex..., in: norm)
+        guard let match = egNumberPattern.firstMatch(in: norm, range: range),
+              let r = Range(match.range(at: 1), in: norm) else { return nil }
+        return Int(norm[r])
     }
 
-    private static let egNumberPattern = try! NSRegularExpression(pattern: "^(?i)(?:eg\\s*)?(\\d{1,4})$")
+    private static let egNumberPattern = try! NSRegularExpression(pattern: "^(?:eg ?)?([0-9]{1,4})$")
     private static let limitEg = 20
     private static let limitTitles = 50
     private static let limitOther = 20

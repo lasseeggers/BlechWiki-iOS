@@ -66,6 +66,63 @@ struct InventoryCodeTests {
         #expect(roundTrip(["Neu2027"], sender: catalog + ["Neu2027"]) == .valid(bookIds: [], unknownCount: 1))
     }
 
+    /// Gültig und vollständig aufgelöst: die Bücher, sonst `nil`.
+    private func books(_ text: String, catalog: [String]) -> Set<String>? {
+        guard case let .valid(ids, 0) = InventoryCode.decode(text, catalog: catalog) else { return nil }
+        return Set(ids)
+    }
+
+    @Test func umgebrochenerCodeInZitierterMail() {
+        let catalog = self.catalog + ["Fünfgeld T", "Ach Gott, dir muss ich's"]
+        let mail = "> Hier unser Inventar:\n> BBW-02J3-086P-\n> GA6Y-SXQM\n> Viele Grüße"
+        #expect(books(mail, catalog: catalog) == ["WBH2025", "BläshBay22", "ZGLE 84"])
+        #expect(InventoryCode.find(mail) == "BBW-02J3-086P-GA6Y-SXQM")
+    }
+
+    @Test func leerraumUndAndereStricheStattBindestrich() {
+        let catalog = self.catalog + ["Fünfgeld T", "Ach Gott, dir muss ich's"]
+        for text in ["BBW 0RJT GA6Y", "BBW—0RJT—GA6Y", "BBW\u{2011}0RJT\u{2011}GA6Y", "BBW\u{2212}0RJT\u{2212}GA6Y",
+                     "BBW – 0RJT – GA6Y", "bbw-0rjt -\n ga6y", "BBW\u{00A0}0RJT\u{00A0}GA6Y"] {
+            #expect(books(text, catalog: catalog) == ["WBH2025"], "\(text)")
+        }
+        #expect(InventoryCode.find("BBW—0RJT—GA6Y") == "BBW-0RJT-GA6Y")
+        #expect(InventoryCode.find("BBW 0RJT GA6Y") == "BBW 0RJT GA6Y")
+    }
+
+    /// Ein Wort aus vier Zeichen hinter dem Code ist keine weitere Gruppe.
+    @Test func wortHinterDemCode() {
+        let catalog = self.catalog + ["Fünfgeld T", "Ach Gott, dir muss ich's"]
+        #expect(books("Hier: BBW-0RJT-GA6Y Euer Chor", catalog: catalog) == ["WBH2025"])
+        #expect(books("BBW 0RJT GA6Y\nEuer Chor", catalog: catalog) == ["WBH2025"])
+        #expect(books("BBW-0RJT-GA6Y Ufer", catalog: catalog) == ["WBH2025"])
+    }
+
+    @Test func fliesstextIstKeinCode() {
+        #expect(InventoryCode.decode("Der BBW Chor probt", catalog: catalog) == .notFound)
+        #expect(InventoryCode.find("Der BBW Chor probt") == nil)
+        #expect(books("Im BBW Chor gibt es BBW-0RJT-GA6Y", catalog: catalog + ["Fünfgeld T", "Ach Gott, dir muss ich's"]) == ["WBH2025"])
+        // Ohne Strich und ohne passende Bücher nicht von Text zu unterscheiden
+        #expect(InventoryCode.decode("BBW will dich", catalog: catalog) == .invalid)
+        #expect(InventoryCode.decode("BBW 0RJT GA6Y", catalog: ["ZGLE 84"]) == .invalid)
+        #expect(InventoryCode.decode("BBW-0RJT-GA6Y", catalog: ["ZGLE 84"]) == .valid(bookIds: [], unknownCount: 1))
+    }
+
+    @Test func nurKopfgruppe() {
+        #expect(InventoryCode.decode("BBW-0RJT", catalog: catalog) == .invalid)
+    }
+
+    @Test func leererKatalog() {
+        let code = InventoryCode.encode(["WBH2025", "BläshBay22"], catalog: catalog)
+        #expect(InventoryCode.decode(code, catalog: []) == .valid(bookIds: [], unknownCount: 2))
+    }
+
+    /// Kotlin vergleicht IDs Byte für Byte. Kanonisch gleiche IDs in NFC und NFD zählen dort doppelt,
+    /// also auch hier, sonst bauten beide Apps verschiedene Codes. Gleicher Wert in InventoryCodeTest.kt.
+    @Test func idsInNfcUndNfdZaehlenWieInKotlinDoppelt() {
+        let nfc = "Bläser", nfd = "Bläser".decomposedStringWithCanonicalMapping
+        #expect(InventoryCode.encode([nfc, nfd], catalog: [nfc, nfd]) == "BBW-0MFE-H6E3-H6E3")
+    }
+
     @Test func kollisionen() {
         var seen: [Int: String] = [:]
         var pair: (String, String)?
@@ -90,6 +147,27 @@ struct SearchNormalizerTests {
         #expect(SearchNormalizer.normalize("#Zuhause ") == "zuhause")
     }
 
+    /// Buchstaben ohne Zerlegung in NFD bleiben ein Wort.
+    @Test func normalizeErsetztLigaturenUndSonderbuchstaben() {
+        #expect(SearchNormalizer.normalize("Søren Kierkegaard") == "soren kierkegaard")
+        #expect(SearchNormalizer.normalize("ÆBLESKIVER Œuvre") == "aebleskiver oeuvre")
+        #expect(SearchNormalizer.normalize("Łódź, Đorđe") == "lodz dorde")
+        #expect(SearchNormalizer.normalize("Fazıl Say") == "fazil say")
+        #expect(SearchNormalizer.normalize("ﬁnale ﬂöte") == "finale flote")
+        #expect(SearchNormalizer.normalize("STRAẞE") == "strasse")
+        #expect(SearchNormalizer.indexContent("Søren Ørsted, Flöte") == "soren orsted flote floete")
+    }
+
+    /// Zerlegte Umlaute (z. B. aus macOS-Dateinamen) wie fertige.
+    @Test func zerlegteUmlaute() {
+        let nfd = { (text: String) in text.decomposedStringWithCanonicalMapping }
+        #expect(SearchNormalizer.normalize(nfd("Lobe den Herren, den mächtigen")) == "lobe den herren den machtigen")
+        #expect(SearchNormalizer.indexContent(nfd("Fünfgeld, Traugott")) == "funfgeld traugott fuenfgeld")
+        #expect(SearchNormalizer.transcribe(nfd("Händel")) == "haendel")
+        #expect(TextFilter(nfd("Händel")).matches("Haendels Tochter"))
+        #expect(TextFilter("haendel").matches(nfd("Händels Tochter")))
+    }
+
     @Test func indexContent() {
         #expect(SearchNormalizer.indexContent("Fünfgeld, Traugott") == "funfgeld traugott fuenfgeld")
         #expect(SearchNormalizer.indexContent("Lobe den Herren") == "lobe den herren")
@@ -100,6 +178,22 @@ struct SearchNormalizerTests {
         #expect(SearchNormalizer.matchExpression("ich's") == "ich* s*")
         #expect(SearchNormalizer.matchExpression("a OR b NEAR \"c\"*") == "a* or* b* near* c*")
         #expect(SearchNormalizer.matchExpression("  ,;- ") == nil)
+    }
+
+    /// Sehr lange Anfragen sprengten den FTS-Ausdrucksbaum.
+    @Test func matchExpressionOhneDoppelteUndHoechstens16Woerter() {
+        #expect(SearchNormalizer.matchExpression("lob Herr LOB herr lob") == "lob* herr*")
+        let words = (0..<5000).map { "w\($0)" }
+        #expect(SearchNormalizer.matchExpression(words.joined(separator: " ")) == words.prefix(16).map { "\($0)*" }.joined(separator: " "))
+    }
+
+    @Test func egNummer() {
+        for query in ["316", "EG 316", "eg316", " 316 ", "EG-316", "„316“", "316.", "EG\u{00A0}316", "0316"] {
+            #expect(SearchRepository.egNumber(query) == 316, "\(query)")
+        }
+        for query in ["12345", "EG 316 1", "３１６", "Lied 316", "e.g. 316", ""] {
+            #expect(SearchRepository.egNumber(query) == nil, "\(query)")
+        }
     }
 
     @Test func textFilter() {
@@ -136,22 +230,23 @@ struct SearchIndexBuilderTests {
 
     @Test func egNumberLabel() {
         #expect(SearchIndexBuilder.egNumberLabel([song("NB", 600), song("Stamm", 316)]) == "EG 316")
-        #expect(SearchIndexBuilder.egNumberLabel([song("alleAnhänge", 9999), song("P", 673), song("BEL", 673), song("W", 612)])
+        #expect(SearchIndexBuilder.egNumberLabel([song("P", 673), song("BEL", 673), song("W", 612)])
             == "EG 612 (W) · 673 (BEL, P)")
         let variants = [song("Ol", 600), song("W", 612)]
         #expect(SearchIndexBuilder.egNumberLabel(variants, appendix: "OL") == "EG 600")
         #expect(SearchIndexBuilder.egNumberLabel(variants, appendix: "NB") == "EG 600 (Ol) · 612 (W)")
         #expect(SearchIndexBuilder.egNumberLabel([song("A", 1), song("B", 2), song("C", 3), song("D", 4)]) == "EG 1 (A) · 2 (B) · 3 (C) …")
-        #expect(SearchIndexBuilder.egNumberLabel([song("alleAnhänge", 9999)]) == nil)
+        #expect(SearchIndexBuilder.egNumberLabel([]) == nil)
     }
 
-    @Test func titleEntriesUeberspringtEgUndDubletten() {
+    @Test func titleEntriesUeberspringtEgUndVerweistAufDenIx() {
         let eg = [EgSongEntity(ix: 1, ixUr: 1, title: "Abend ist es Herr; die Stunde", part: "P", number: 673, occasion: nil)]
         let entries = SearchIndexBuilder.titleEntries(
-            ["Abend ist es, Herr, die Stunde", "Herr, das Licht deiner Liebe", "Herr, das Licht Deiner Liebe", "Anderer Titel"],
+            [TitleEntity(ix: 10, title: "Abend ist es, Herr, die Stunde"), TitleEntity(ix: 4292, title: "Kanon"), TitleEntity(ix: 8358, title: "Kanon")],
             egSongs: eg
         )
-        #expect(entries.map(\.label) == ["Herr, das Licht deiner Liebe", "Anderer Titel"])
+        #expect(entries.map(\.label) == ["Kanon", "Kanon"])
+        #expect(entries.map(\.refKey) == ["4292", "8358"])
     }
 }
 
@@ -183,6 +278,18 @@ struct HymnalSectionsTests {
         ])
 
         #expect(sections.map(\.occasion) == ["Advent", HymnalSections.fallbackOccasion, "Plattdeutsche Lieder"])
+    }
+
+    /// Geschütztes Leerzeichen und Zeilentrenner zählen wie auf Android als Leerraum.
+    @Test func unicodeLeerraumImAnlass() {
+        let sections = HymnalSections.build([
+            song(1, "Stamm", 1, "Loben und Danken"),
+            song(2, "Stamm", 2, "Loben\u{00A0}und\u{2028}Danken"),
+            song(3, "Stamm", 3, "\u{3000}Advent\u{00A0}"),
+        ])
+
+        #expect(sections.map(\.occasion) == ["Loben und Danken", "Advent"])
+        #expect(sections[0].songs.map(\.number) == [1, 2])
     }
 
     @Test func doppelteEintraegeNurEinmal() {

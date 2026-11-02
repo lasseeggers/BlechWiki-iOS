@@ -1,5 +1,12 @@
 import Foundation
 
+/// Titel ohne Doppel. `ix` ist der Schlüssel für die Fundstellen.
+struct TitleEntity: Equatable, Sendable {
+    var ix: Int
+    var title: String
+}
+
+/// `id` ist der numerische Index der API, als Text.
 struct BookEntity: Equatable, Sendable {
     var id: String
     var title: String
@@ -11,8 +18,9 @@ struct BookEntity: Equatable, Sendable {
     var coverUrl: String?
 }
 
+/// `id` ist der numerische Index der API, als Text. Schreibvarianten des Namens sind nicht gespeichert.
 struct ComposerEntity: Equatable, Sendable {
-    var shortName: String
+    var id: String
     var name: String
     var born: String?
     var died: String?
@@ -44,7 +52,7 @@ struct SearchEntry: Equatable, Sendable {
     var label: String
     var detail: String?
     var type: SearchEntryType
-    /// EG: ix, Titel: Titel, Buch: BuchId, Komponist: Kurzname.
+    /// EG: ix, Titel: ix, Buch: id, Komponist: id.
     var refKey: String
     /// EG: ixUr (Melodie), sonst nil.
     var refNumber: Int?
@@ -75,19 +83,15 @@ struct OwnedHit: Equatable, Sendable {
 
 /// Stand des letzten Stammdaten-Abgleichs. Genau eine Zeile mit id 0.
 struct SyncState: Equatable, Sendable {
-    var lastBookNumber: Int?
-    var lastComposerNumber: Int?
-    var lastTitleNumber: Int?
+    /// Höchster bekannter Änderungszähler je Tabelle, `nil` solange die Tabelle nie geladen wurde.
+    var titleChangeCounter: Int?
+    var bookChangeCounter: Int?
+    var composerChangeCounter: Int?
     var checkedAtMillis: Int
-    /// Letzter vollständiger Neuabgleich aller Bereiche, unabhängig von der Datenversion.
+    /// Letztes vollständiges Neuladen aller Tabellen.
     var fullSyncAtMillis: Int?
-    /// Stand im Änderungsprotokoll der REST-API je Tabelle, `nil` solange unbekannt. Erkennt
-    /// auch Korrekturen und Löschungen, die die AutoNr nicht anzeigt.
-    var bookChangeCounter: Int? = nil
-    var composerChangeCounter: Int? = nil
-    var titleChangeCounter: Int? = nil
 
-    var isComplete: Bool { lastBookNumber != nil && lastComposerNumber != nil && lastTitleNumber != nil }
+    var isComplete: Bool { titleChangeCounter != nil && bookChangeCounter != nil && composerChangeCounter != nil }
 }
 
 /// Gecachte Fundstelle, gespeichert pro Abfrage in API-Reihenfolge.
@@ -111,6 +115,6 @@ struct FundstelleEntity: Equatable, Sendable {
 struct FetchState: Equatable, Sendable {
     var queryKey: String
     var fetchedAtMillis: Int
-    /// `lastTitleNumber` zum Abrufzeitpunkt. Weicht er vom aktuellen ab, gilt der Cache als veraltet.
+    /// `titleChangeCounter` zum Abrufzeitpunkt. Weicht er vom aktuellen ab, gilt der Cache als veraltet.
     var titleVersion: Int?
 }

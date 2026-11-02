@@ -8,31 +8,49 @@ import os
 ///   im WLAN zusätzlich der monatliche Vollabgleich
 /// - danach und nach jeder Inventar-Änderung das Laden der Inventar-Bücher, nacheinander
 /// - bei Fehlern bis zu drei Wiederholungen mit wachsendem Abstand (30 s, 60 s, 120 s)
+///
+/// Wer schreibt, bittet iOS über `beginBackgroundWork` um etwas Zeit im Hintergrund. Die
+/// Datenbank liegt in der App Group, und iOS beendet Apps, die beim Wechsel in den Hintergrund
+/// eine Sperre auf eine Datei dort halten (0xdead10cc).
 @MainActor
 @Observable
 public final class SyncCoordinator {
 
     public private(set) var status: SyncStatus = .idle
 
+    /// Beginnt Arbeit, die beim Wechsel in den Hintergrund zu Ende laufen soll, und liefert die
+    /// Funktion, die sie beendet. Setzt die App (`UIApplication.beginBackgroundTask`), das Package
+    /// kennt UIKit nicht.
+    @ObservationIgnored public var beginBackgroundWork: (@MainActor (String) -> @MainActor () -> Void)?
+
     private let sync: MasterDataSync
     private let fundstellen: FundstellenRepository
     private let preferences: UserPreferences
-    @ObservationIgnored private var syncTask: Task<Void, Never>?
+    private let db: AppDatabase
+    @ObservationIgnored private var syncTask: Task<Bool, Never>?
     @ObservationIgnored private var ownedBooksTask: Task<Void, Never>?
+    /// Das WLAN wurde erst erkannt, als schon ein Abgleich lief. Der monatliche Vollabgleich
+    /// folgt dann im Anschluss.
+    @ObservationIgnored private var fullRefreshPending = false
     private let log = Logger(subsystem: "blechwiki.eggers.media", category: "Sync")
 
     private static let maxRetries = 3
     private static let backoff: Duration = .seconds(30)
 
-    public init(sync: MasterDataSync, fundstellen: FundstellenRepository, preferences: UserPreferences) {
+    public init(sync: MasterDataSync, fundstellen: FundstellenRepository, preferences: UserPreferences, db: AppDatabase) {
         self.sync = sync
         self.fundstellen = fundstellen
         self.preferences = preferences
+        self.db = db
     }
 
-    /// Beim Aktivieren der App. Läuft schon ein Abgleich, passiert nichts.
+    /// Beim Aktivieren der App und wenn das WLAN erkannt wird. Läuft schon ein Abgleich, wird kein
+    /// zweiter gestartet. `unmetered` holt dann nur den Vollabgleich nach, falls fällig.
     public func onAppActive(unmetered: Bool) {
-        guard syncTask == nil else { return }
+        guard syncTask == nil else {
+            if unmetered { fullRefreshPending = true }
+            return
+        }
         startSync(force: false, fullRefreshIfDue: unmetered)
     }
 
@@ -42,22 +60,12 @@ public final class SyncCoordinator {
     }
 
     /// Datenversion jetzt prüfen, z. B. wenn ein geteiltes Inventar unbekannte Bücher enthält.
-    /// Ein Versuch ohne Wiederholung, damit der Dialog schnell eine Antwort zeigen kann.
+    /// Ein Versuch ohne Wiederholung, damit der Dialog schnell eine Antwort zeigen kann. Bricht
+    /// einen laufenden Abgleich ab und ersetzt ihn, damit nie zwei gleichzeitig laufen und der
+    /// Dialog nicht auf den alten wartet.
     /// - Returns: `false`, wenn BlechWiki nicht erreichbar war
     public func checkCatalogNow() async -> Bool {
-        syncTask?.cancel()
-        syncTask = nil
-        status = .running
-        do {
-            _ = try await sync.sync(force: true)
-            status = .idle
-            startOwnedBooks(delay: .zero)
-            return true
-        } catch {
-            log.warning("Verzeichnis-Prüfung fehlgeschlagen: \(String(describing: error))")
-            status = .idle
-            return false
-        }
+        await startSync(force: true, fullRefreshIfDue: false, retries: 0).value
     }
 
     /// Nach Änderungen am Inventar. Die Verzögerung fasst mehrere Klicks zu einem Lauf zusammen.
@@ -65,35 +73,56 @@ public final class SyncCoordinator {
         startOwnedBooks(delay: .seconds(2))
     }
 
-    private func startSync(force: Bool, fullRefreshIfDue: Bool) {
-        syncTask?.cancel()
-        syncTask = Task { [weak self] in
-            await self?.runSync(force: force, fullRefreshIfDue: fullRefreshIfDue)
-        }
+    /// Führt `body` mit Zeit im Hintergrund aus, siehe `beginBackgroundWork`.
+    public func withBackgroundTime<T>(_ name: String, _ body: () async throws -> T) async rethrows -> T {
+        let end = beginBackgroundWork?(name)
+        defer { end?() }
+        return try await body()
     }
 
-    private func runSync(force: Bool, fullRefreshIfDue: Bool) async {
+    @discardableResult
+    private func startSync(force: Bool, fullRefreshIfDue: Bool, retries: Int = SyncCoordinator.maxRetries) -> Task<Bool, Never> {
+        syncTask?.cancel()
+        if fullRefreshIfDue { fullRefreshPending = false }
+        let task = Task { [weak self] in
+            await self?.runSync(force: force, fullRefreshIfDue: fullRefreshIfDue, retries: retries) ?? false
+        }
+        syncTask = task
+        return task
+    }
+
+    private func runSync(force: Bool, fullRefreshIfDue: Bool, retries: Int) async -> Bool {
         defer { if !Task.isCancelled { syncTask = nil } }
-        for attempt in 0...Self.maxRetries {
+        for attempt in 0...retries {
             status = .running
             do {
-                let outcome = try await sync.sync(force: force, fullRefreshIfDue: fullRefreshIfDue)
+                let outcome = try await withBackgroundTime("Abgleich") {
+                    try await sync.sync(force: force, fullRefreshIfDue: fullRefreshIfDue)
+                }
                 log.info("Stammdaten-Abgleich: \(String(describing: outcome))")
+                if fullRefreshPending, !Task.isCancelled {
+                    fullRefreshPending = false
+                    let full = try? await withBackgroundTime("Abgleich") { try await sync.sync(fullRefreshIfDue: true) }
+                    log.info("Vollabgleich im WLAN: \(String(describing: full))")
+                }
+                // Ersetzt, aber trotzdem fertig geworden: Status und Inventar sind Sache des neuen Laufs
+                if Task.isCancelled { return true }
                 status = .idle
                 // Erst jetzt ist die Datenversion bekannt. Ein parallel gestarteter Bücher-Abgleich
                 // hielte veraltete Bücher sonst für frisch.
                 startOwnedBooks(delay: .zero)
-                return
+                return true
             } catch {
-                if Task.isCancelled { return }
+                if Task.isCancelled { return false }
                 log.warning("Stammdaten-Abgleich fehlgeschlagen (Versuch \(attempt + 1)): \(String(describing: error))")
-                if attempt == Self.maxRetries { break }
+                if attempt == retries { break }
                 status = .waiting(afterFailure: true)
                 try? await Task.sleep(for: Self.backoff * (1 << attempt))
-                if Task.isCancelled { return }
+                if Task.isCancelled { return false }
             }
         }
         status = .failed
+        return false
     }
 
     private func startOwnedBooks(delay: Duration) {
@@ -108,22 +137,26 @@ public final class SyncCoordinator {
     }
 
     /// Lädt den Inhalt aller markierten Bücher. Bücher mit frischem Cache kosten keinen Request.
+    /// Bücher, die nicht (mehr) im Verzeichnis stehen, beantwortet der Server mit HTTP 500. Sie
+    /// kosteten sonst bei jedem Aktivieren alle Wiederholungen und bleiben deshalb außen vor.
     private func runOwnedBooks() async {
         for attempt in 0...Self.maxRetries {
-            let ids = preferences.ownedBookIds.sorted()
+            let owned = preferences.ownedBookIds
+            let known = Set((try? db.books(ids: Array(owned)))?.map(\.id) ?? [])
+            let ids = owned.filter(known.contains).sorted()
             var loaded = 0
             var failed = 0
             // Nacheinander, um den privat betriebenen Server nicht zu belasten
             for id in ids {
                 if Task.isCancelled { return }
                 do {
-                    if try await fundstellen.refresh(.byBook(id)) { loaded += 1 }
+                    if try await withBackgroundTime("Inventar", { try await fundstellen.refresh(.byBook(id)) }) { loaded += 1 }
                 } catch {
                     failed += 1
                     log.warning("Buch \(id) konnte nicht geladen werden: \(String(describing: error))")
                 }
             }
-            log.info("Inventar: \(ids.count) Bücher, \(loaded) geladen, \(failed) fehlgeschlagen")
+            log.info("Inventar: \(ids.count) Bücher, \(loaded) geladen, \(failed) fehlgeschlagen, \(owned.count - ids.count) nicht im Verzeichnis")
             if failed == 0 || attempt == Self.maxRetries { return }
             try? await Task.sleep(for: Self.backoff * (1 << attempt))
             if Task.isCancelled { return }

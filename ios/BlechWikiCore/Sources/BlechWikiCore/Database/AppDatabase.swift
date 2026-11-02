@@ -1,53 +1,82 @@
 import Foundation
+import SQLite3
 
 /// Lokale Datenbank. Enthält nur Daten, die sich jederzeit neu vom Server laden lassen.
-/// Deshalb bei Schemawechsel Neuaufbau statt Migration, wie bei der Android-App. Ausnahme sind
-/// einfache Spalten-Ergänzungen: Ein Neuaufbau würde den Fundstellen-Cache der Inventar-Bücher
-/// verwerfen, und jedes Gerät müsste sie neu laden.
+/// Deshalb bei Schemawechsel Neuaufbau statt Migration, wie bei der Android-App. Ein Neuaufbau
+/// verwirft auch den Fundstellen-Cache der Inventar-Bücher, und jedes Gerät lädt sie nach dem
+/// Update neu. Fehlt künftig nur eine Spalte, besser per `ALTER TABLE` ergänzen.
 ///
-/// Threadsicher: Alle Zugriffe laufen unter einer Sperre. Die Abfragen sind klein
-/// (Millisekunden), nur der Stammdaten-Abgleich schreibt größere Mengen.
+/// Threadsicher: Schreiben und Lesen haben je eine Verbindung unter eigener Sperre. Die Abfragen
+/// sind klein (Millisekunden), nur der Stammdaten-Abgleich schreibt größere Mengen und hält die
+/// Schreibsperre dabei mehrere Sekunden. Dank WAL lesen die Models auf dem Main Thread währenddessen
+/// den alten Stand, statt zu warten.
 public final class AppDatabase: @unchecked Sendable {
 
-    private static let schemaVersion = 2
+    private static let schemaVersion = 4
 
     private let lock = NSLock()
     private let connection: SQLiteConnection
+    /// Nur lesend, mit eigenem Statement-Cache. `nil` bei der Datenbank im Speicher, die jede
+    /// Verbindung für sich hätte. Dann liest `connection`.
+    private let reader: SQLiteConnection?
+    private let readLock = NSLock()
+    private let url: URL?
     let changes: DataChanges
 
-    /// `url` = nil: Datenbank im Speicher, für Tests.
+    /// `url` = nil: Datenbank im Speicher, für Tests und als letzter Ausweg beim Start.
+    /// Wirft, wenn ein früherer Zugriff die Datei als beschädigt erkannt hat. Dann
+    /// `SharedStorage.removeDatabase()` aufrufen und neu öffnen.
     public init(url: URL?, changes: DataChanges = DataChanges()) throws {
-        connection = try SQLiteConnection(path: url?.path)
-        self.changes = changes
+        if let url, FileManager.default.fileExists(atPath: Self.corruptionMarker(url).path) {
+            throw SQLiteConnection.Error(description: "Datenbank als beschädigt markiert", code: SQLITE_CORRUPT)
+        }
+        let connection = try SQLiteConnection(path: url?.path)
         try connection.execute("PRAGMA journal_mode = WAL")
-        switch connection.userVersion {
-        case Self.schemaVersion: break
-        case 1: try migrateFrom1()
-        default: try recreateSchema()
+        // Version 3: REST statt SOAP, neue Schlüssel für Titel, Bücher und Komponisten
+        // Version 4: neue Normalisierung (ø, æ, Ligaturen). Von 3 aus nur Suchindex neu, ohne Download
+        if try connection.userVersion() != Self.schemaVersion {
+            // App und Share Extension öffnen nach einem Update womöglich gleichzeitig. Die
+            // Transaktion lässt die zweite warten, danach findet sie das neue Schema vor.
+            try connection.transaction {
+                switch try connection.userVersion() {
+                case Self.schemaVersion: break
+                case 3:
+                    try SearchIndexBuilder.rebuild(connection)
+                    try connection.setUserVersion(Self.schemaVersion)
+                default: try Self.recreateSchema(connection)
+                }
+            }
         }
+        // Erst nach einem Neuaufbau öffnen, sonst verwiese ihr Statement-Cache auf alte Tabellen
+        reader = try url.map { try SQLiteConnection(path: $0.path, readOnly: true) }
+        self.connection = connection
+        self.url = url
+        self.changes = changes
     }
 
-    /// Version 2: Änderungszähler der REST-API in `sync_state`.
-    private func migrateFrom1() throws {
-        try connection.transaction {
-            try connection.execute("""
-                ALTER TABLE sync_state ADD COLUMN bookChangeCounter INTEGER;
-                ALTER TABLE sync_state ADD COLUMN composerChangeCounter INTEGER;
-                ALTER TABLE sync_state ADD COLUMN titleChangeCounter INTEGER;
-                """)
-        }
-        connection.clearStatementCache()
-        connection.userVersion = Self.schemaVersion
+    /// Erkennt den Fehler einer beschädigten Datei, wie ihn `init` oder ein Zugriff wirft. Nur dann
+    /// hilft Löschen und neu Laden. Andere Fehler (Datei gesperrt, Speicher voll) liegen nicht an der
+    /// Datei, Löschen verlöre dort nur den Cache.
+    public static func isCorruption(_ error: Swift.Error) -> Bool {
+        (error as? SQLiteConnection.Error)?.isCorruption ?? false
     }
 
-    private func recreateSchema() throws {
+    /// Bricht eine laufende Schreibtransaktion ab, z. B. wenn die Zeit im Hintergrund abläuft. Sie
+    /// wird zurückgerollt, der Abgleich scheitert und läuft beim nächsten Start erneut. Aus jedem
+    /// Thread aufrufbar.
+    public func interrupt() {
+        connection.interrupt()
+    }
+
+    private static func recreateSchema(_ connection: SQLiteConnection) throws {
         let existing = try connection.rows("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'search_index_%'") { $0.text(0) }
         for table in existing { try connection.execute("DROP TABLE IF EXISTS \"\(table)\"") }
         try connection.execute("""
+            CREATE TABLE titles (ix INTEGER PRIMARY KEY NOT NULL, title TEXT NOT NULL);
             CREATE TABLE books (
                 id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, subtitle TEXT, year INTEGER,
                 editor TEXT, publisher TEXT, publisherNumber TEXT, coverUrl TEXT);
-            CREATE TABLE composers (shortName TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, born TEXT, died TEXT);
+            CREATE TABLE composers (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, born TEXT, died TEXT);
             CREATE TABLE eg_songs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, ix INTEGER NOT NULL, ixUr INTEGER NOT NULL,
                 title TEXT NOT NULL, part TEXT NOT NULL, number INTEGER NOT NULL, occasion TEXT);
@@ -59,9 +88,8 @@ public final class AppDatabase: @unchecked Sendable {
                 notindexed=norm, notindexed=label, notindexed=detail, notindexed=type,
                 notindexed=refKey, notindexed=refNumber);
             CREATE TABLE sync_state (
-                id INTEGER PRIMARY KEY NOT NULL, lastBookNumber INTEGER, lastComposerNumber INTEGER,
-                lastTitleNumber INTEGER, checkedAtMillis INTEGER NOT NULL, fullSyncAtMillis INTEGER,
-                bookChangeCounter INTEGER, composerChangeCounter INTEGER, titleChangeCounter INTEGER);
+                id INTEGER PRIMARY KEY NOT NULL, titleChangeCounter INTEGER, bookChangeCounter INTEGER,
+                composerChangeCounter INTEGER, checkedAtMillis INTEGER NOT NULL, fullSyncAtMillis INTEGER);
             CREATE TABLE fundstellen (
                 queryKey TEXT NOT NULL, position INTEGER NOT NULL, bookId TEXT NOT NULL,
                 bookTitle TEXT NOT NULL, bookSubtitle TEXT, number TEXT NOT NULL, title TEXT NOT NULL,
@@ -71,13 +99,21 @@ public final class AppDatabase: @unchecked Sendable {
             CREATE TABLE fetch_state (queryKey TEXT PRIMARY KEY NOT NULL, fetchedAtMillis INTEGER NOT NULL, titleVersion INTEGER);
             """)
         connection.clearStatementCache()
-        connection.userVersion = Self.schemaVersion
+        try connection.setUserVersion(Self.schemaVersion)
     }
 
+    /// Liest über die eigene Verbindung, ohne auf eine laufende Schreibtransaktion zu warten.
+    /// Innerhalb von `write` nicht aufrufen, sondern die dort übergebene Verbindung nutzen. `read`
+    /// sähe den Stand vor der Transaktion.
     func read<T>(_ body: (SQLiteConnection) throws -> T) throws -> T {
-        lock.lock()
-        defer { lock.unlock() }
-        return try body(connection)
+        guard let reader else {
+            lock.lock()
+            defer { lock.unlock() }
+            return try markingCorruption { try body(connection) }
+        }
+        readLock.lock()
+        defer { readLock.unlock() }
+        return try markingCorruption { try body(reader) }
     }
 
     /// Schreibt in einer Transaktion und meldet danach die Änderung.
@@ -85,10 +121,25 @@ public final class AppDatabase: @unchecked Sendable {
         let result: T = try {
             lock.lock()
             defer { lock.unlock() }
-            return try connection.transaction { try body(connection) }
+            return try markingCorruption { try connection.transaction { try body(connection) } }
         }()
         changes.notify()
         return result
+    }
+
+    /// Ist die Datei beschädigt, scheitert jeder weitere Abgleich. Eine Markierung neben der Datei
+    /// sorgt dafür, dass sie beim nächsten Start verworfen und neu geladen wird.
+    private func markingCorruption<T>(_ body: () throws -> T) throws -> T {
+        do {
+            return try body()
+        } catch let error as SQLiteConnection.Error where error.isCorruption {
+            if let url { FileManager.default.createFile(atPath: Self.corruptionMarker(url).path, contents: nil) }
+            throw error
+        }
+    }
+
+    static func corruptionMarker(_ url: URL) -> URL {
+        url.appendingPathExtension("corrupt")
     }
 }
 
@@ -167,6 +218,21 @@ extension AppDatabase {
         try read { db in try db.rows("SELECT id FROM books") { $0.text(0) } }
     }
 
+    func books(ids: [String]) throws -> [BookEntity] {
+        if ids.isEmpty { return [] }
+        return try read { db in
+            try db.rows("/*dyn*/ SELECT * FROM books WHERE id IN (\(placeholders(ids.count)))", ids.map { .text($0) }, map: Self.book)
+        }
+    }
+
+    func titles() throws -> [TitleEntity] {
+        try read { db in try db.rows("SELECT ix, title FROM titles") { TitleEntity(ix: $0.int(0), title: $0.text(1)) } }
+    }
+
+    func allEgSongs() throws -> [EgSongEntity] {
+        try read { db in try db.rows("SELECT ix, ixUr, title, part, number, occasion FROM eg_songs", map: Self.egSong) }
+    }
+
     private static func book(_ row: SQLiteConnection.Row) -> BookEntity {
         BookEntity(
             id: row.text(0), title: row.text(1), subtitle: row.textOrNil(2), year: row.intOrNil(3),
@@ -179,10 +245,10 @@ extension AppDatabase {
         if names.isEmpty { return [] }
         return try read { db in
             try db.rows(
-                "/*dyn*/ SELECT shortName, name, born, died FROM composers WHERE name IN (\(placeholders(names.count)))",
+                "/*dyn*/ SELECT id, name, born, died FROM composers WHERE name IN (\(placeholders(names.count)))",
                 names.map { .text($0) }
             ) {
-                ComposerEntity(shortName: $0.text(0), name: $0.text(1), born: $0.textOrNil(2), died: $0.textOrNil(3))
+                ComposerEntity(id: $0.text(0), name: $0.text(1), born: $0.textOrNil(2), died: $0.textOrNil(3))
             }
         }
     }
@@ -225,24 +291,37 @@ extension AppDatabase {
     func syncState() throws -> SyncState? {
         try read { db in
             try db.rows("""
-                SELECT lastBookNumber, lastComposerNumber, lastTitleNumber, checkedAtMillis, fullSyncAtMillis,
-                       bookChangeCounter, composerChangeCounter, titleChangeCounter
+                SELECT titleChangeCounter, bookChangeCounter, composerChangeCounter, checkedAtMillis, fullSyncAtMillis
                 FROM sync_state WHERE id = 0
                 """) {
                 SyncState(
-                    lastBookNumber: $0.intOrNil(0), lastComposerNumber: $0.intOrNil(1), lastTitleNumber: $0.intOrNil(2),
-                    checkedAtMillis: $0.int(3), fullSyncAtMillis: $0.intOrNil(4),
-                    bookChangeCounter: $0.intOrNil(5), composerChangeCounter: $0.intOrNil(6), titleChangeCounter: $0.intOrNil(7)
+                    titleChangeCounter: $0.intOrNil(0), bookChangeCounter: $0.intOrNil(1), composerChangeCounter: $0.intOrNil(2),
+                    checkedAtMillis: $0.int(3), fullSyncAtMillis: $0.intOrNil(4)
                 )
             }.first
         }
     }
 
-    static func replaceBooks(_ db: SQLiteConnection, _ books: [BookEntity]) throws {
-        try db.run("DELETE FROM books")
+    static func deleteTitles(_ db: SQLiteConnection, ixs: [Int]? = nil) throws {
+        guard let ixs else { return try db.run("DELETE FROM titles") }
+        for ix in ixs { try db.run("DELETE FROM titles WHERE ix = ?", [.int(ix)]) }
+    }
+
+    static func upsertTitles(_ db: SQLiteConnection, _ titles: [TitleEntity]) throws {
+        for t in titles {
+            try db.run("INSERT OR REPLACE INTO titles (ix, title) VALUES (?, ?)", [.int(t.ix), .text(t.title)])
+        }
+    }
+
+    static func deleteBooks(_ db: SQLiteConnection, ids: [String]? = nil) throws {
+        guard let ids else { return try db.run("DELETE FROM books") }
+        for id in ids { try db.run("DELETE FROM books WHERE id = ?", [.text(id)]) }
+    }
+
+    static func upsertBooks(_ db: SQLiteConnection, _ books: [BookEntity]) throws {
         for b in books {
             try db.run(
-                "INSERT INTO books (id, title, subtitle, year, editor, publisher, publisherNumber, coverUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO books (id, title, subtitle, year, editor, publisher, publisherNumber, coverUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [.text(b.id), .text(b.title), SQLValue(b.subtitle), SQLValue(b.year), SQLValue(b.editor),
                  SQLValue(b.publisher), SQLValue(b.publisherNumber), SQLValue(b.coverUrl)]
             )
@@ -252,10 +331,9 @@ extension AppDatabase {
     static func replaceComposers(_ db: SQLiteConnection, _ composers: [ComposerEntity]) throws {
         try db.run("DELETE FROM composers")
         for c in composers {
-            // INSERT OR REPLACE: Die API liefert Kurznamen nicht garantiert eindeutig
             try db.run(
-                "INSERT OR REPLACE INTO composers (shortName, name, born, died) VALUES (?, ?, ?, ?)",
-                [.text(c.shortName), .text(c.name), SQLValue(c.born), SQLValue(c.died)]
+                "INSERT OR REPLACE INTO composers (id, name, born, died) VALUES (?, ?, ?, ?)",
+                [.text(c.id), .text(c.name), SQLValue(c.born), SQLValue(c.died)]
             )
         }
     }
@@ -280,13 +358,12 @@ extension AppDatabase {
     static func upsertSyncState(_ db: SQLiteConnection, _ s: SyncState) throws {
         try db.run(
             """
-            INSERT OR REPLACE INTO sync_state (id, lastBookNumber, lastComposerNumber, lastTitleNumber, checkedAtMillis,
-                                               fullSyncAtMillis, bookChangeCounter, composerChangeCounter, titleChangeCounter)
-            VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO sync_state (id, titleChangeCounter, bookChangeCounter, composerChangeCounter,
+                                               checkedAtMillis, fullSyncAtMillis)
+            VALUES (0, ?, ?, ?, ?, ?)
             """,
-            [SQLValue(s.lastBookNumber), SQLValue(s.lastComposerNumber), SQLValue(s.lastTitleNumber),
-             .int(s.checkedAtMillis), SQLValue(s.fullSyncAtMillis),
-             SQLValue(s.bookChangeCounter), SQLValue(s.composerChangeCounter), SQLValue(s.titleChangeCounter)]
+            [SQLValue(s.titleChangeCounter), SQLValue(s.bookChangeCounter), SQLValue(s.composerChangeCounter),
+             .int(s.checkedAtMillis), SQLValue(s.fullSyncAtMillis)]
         )
     }
 }

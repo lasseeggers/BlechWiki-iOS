@@ -49,6 +49,22 @@ extension EnvironmentValues {
     @Entry var openRoute = OpenRouteAction { _ in }
 }
 
+/// Model einer Seite, einmal pro Seite angelegt. SwiftUI erzeugt Views bei jedem Neuzeichnen der
+/// Elternansicht neu. Mit `State(initialValue: Model(...))` entstand dabei jedes Mal ein Model samt
+/// Datenbankabfragen im `init`, das SwiftUI gleich wieder verwarf. Die Box kostet beim Erzeugen
+/// nichts. Das Model entsteht beim ersten Zeichnen, die Seite hat also sofort Inhalt.
+@MainActor
+final class ModelBox<Model: AnyObject> {
+    private var model: Model?
+
+    func callAsFunction(_ make: () -> Model) -> Model {
+        if let model { return model }
+        let new = make()
+        model = new
+        return new
+    }
+}
+
 /// Filter- oder Auswahl-Chip, ausgewählt mit Häkchen.
 struct Chip: View {
     let label: String
@@ -121,6 +137,15 @@ private struct CoverImage: View {
     let width: CGFloat
     @State private var image: UIImage?
 
+    init(preferred: URL?, fallback: URL?, width: CGFloat) {
+        self.preferred = preferred
+        self.fallback = fallback
+        self.width = width
+        // Aus dem Speicher sofort zeigen. Erst in `.task` stünde beim Scrollen kurz ein graues Kästchen da.
+        let size = CoverLoader.pixelSize(height: width * 1.4)
+        _image = State(initialValue: [preferred, fallback].lazy.compactMap { $0 }.compactMap { CoverLoader.cached($0, maxPixelSize: size) }.first)
+    }
+
     var body: some View {
         Color(.secondarySystemFill)
             .overlay {
@@ -133,15 +158,15 @@ private struct CoverImage: View {
             .accessibilityHidden(true)
             .task(id: preferred) {
                 // Die größeren Varianten sind nicht dokumentiert, daher bei Ladefehler die zweite URL
-                image = await loadCover([preferred, fallback])
+                image = await loadCover([preferred, fallback], maxPixelSize: CoverLoader.pixelSize(height: width * 1.4))
             }
     }
 }
 
 /// Erstes Cover aus `urls`, das sich laden lässt.
-private func loadCover(_ urls: [URL?]) async -> UIImage? {
+private func loadCover(_ urls: [URL?], maxPixelSize: Int) async -> UIImage? {
     for url in urls.compactMap({ $0 }) {
-        if let image = try? await CoverLoader.load(url) { return image }
+        if let image = try? await CoverLoader.load(url, maxPixelSize: maxPixelSize) { return image }
     }
     return nil
 }
@@ -154,6 +179,8 @@ private func loadCover(_ urls: [URL?]) async -> UIImage? {
 /// `fullScreenCover` liefe immer nach unten und begänne bei Tempo null.
 struct CoverViewer: View {
     let url: String?
+    /// Buchtitel für VoiceOver.
+    var title: String?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var image: UIImage?
@@ -173,7 +200,7 @@ struct CoverViewer: View {
                 Color.black.opacity(isClosing ? 0 : 1 - progress * 0.8).ignoresSafeArea()
                 Group {
                     if let image {
-                        Image(uiImage: image).resizable().scaledToFit()
+                        Image(uiImage: image).resizable().scaledToFit().accessibilityLabel(title.map { "Cover von \($0)" } ?? "Cover")
                     } else if failed {
                         Text("Cover nicht verfügbar").foregroundStyle(.white)
                     } else {
@@ -186,6 +213,8 @@ struct CoverViewer: View {
             }
             .overlay(alignment: .topTrailing) {
                 Button("Schließen", systemImage: "xmark") { dismiss() }
+                    // Esc auf Mac und iPad mit Tastatur
+                    .keyboardShortcut(.cancelAction)
                     .labelStyle(.iconOnly)
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.white)
@@ -219,7 +248,7 @@ struct CoverViewer: View {
         .presentationBackground(.clear)
         .statusBarHidden()
         .task {
-            image = await loadCover([CoverUrls.full(url), CoverUrls.thumbnail(url)])
+            image = await loadCover([CoverUrls.full(url), CoverUrls.thumbnail(url)], maxPixelSize: CoverLoader.fullScreenPixelSize)
             failed = image == nil
         }
         .accessibilityAction(.escape) { dismiss() }
@@ -258,10 +287,17 @@ struct CoverViewer: View {
 struct EgAppendixSelectionView: View {
     let settings: SettingsRepository
     @Environment(\.dismiss) private var dismiss
+    /// Eigener Stand für das Häkchen: Steht die Seite rechts neben der Suche, schließt `dismiss` sie
+    /// nicht, und das Häkchen muss trotzdem wandern.
+    @State private var selected: String?
+
+    init(settings: SettingsRepository) {
+        self.settings = settings
+        _selected = State(initialValue: (try? settings.selectedEgAppendix())?.code)
+    }
 
     var body: some View {
         let appendices = (try? settings.egAppendices()) ?? []
-        let selected = (try? settings.selectedEgAppendix())?.code
         List {
             Section {
                 option("Keine Angabe", code: nil, selected: selected == nil)
@@ -272,6 +308,7 @@ struct EgAppendixSelectionView: View {
                 Text("Bestimmt, welche Nummern aus den EG-Anhängen angezeigt werden, und welche Hefte wir dir vorschlagen.")
             }
         }
+        .readableWidth()
         .navigationTitle("Landeskirche")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -279,13 +316,15 @@ struct EgAppendixSelectionView: View {
     private func option(_ label: String, code: String?, selected: Bool) -> some View {
         Button {
             settings.selectEgAppendix(code)
+            self.selected = code
             dismiss()
         } label: {
             HStack {
                 Text(label).foregroundStyle(Color.primary)
                 Spacer()
                 if selected {
-                    Image(systemName: "checkmark").foregroundStyle(Color.brand).fontWeight(.semibold)
+                    // Vorgelesen wird die Auswahl über .isSelected
+                    Image(systemName: "checkmark").foregroundStyle(Color.brand).fontWeight(.semibold).accessibilityHidden(true)
                 }
             }
             .contentShape(Rectangle())
@@ -294,17 +333,68 @@ struct EgAppendixSelectionView: View {
     }
 }
 
+/// "iPhone", "iPad" oder "Mac", für Texte wie „Die Suche läuft auf dem iPhone“.
+var deviceName: String {
+    switch UIDevice.current.userInterfaceIdiom {
+    case .pad: "iPad"
+    case .mac: "Mac"
+    default: "iPhone"
+    }
+}
+
 /// "1 Buch", "12 Bücher"
 func booksLabel(_ count: Int) -> String { count == 1 ? "1 Buch" : "\(count) Bücher" }
 
-let standFormat: Date.FormatStyle = .dateTime.day(.twoDigits).month(.twoDigits).year()
+/// "01.11.2026", wie in der Android-App. Die Texte sind deutsch, das Datum folgt nicht der Region des Geräts.
+let standFormat: Date.FormatStyle = .dateTime.day(.twoDigits).month(.twoDigits).year().locale(Locale(identifier: "de_DE"))
 
 extension View {
+    /// Auf dem Mac haben Listenzeilen oben und unten kaum Abstand, Cover und Text kleben dann an
+    /// Trennlinie und Kartenrand. iPhone und iPad bringen den Abstand selbst mit.
+    @ViewBuilder
+    func macRowPadding(_ value: CGFloat = 8) -> some View {
+        #if targetEnvironment(macCatalyst)
+        padding(.vertical, value)
+        #else
+        self
+        #endif
+    }
+
+    /// Handzeiger über Text-Links auf dem Mac. SwiftUIs `pointerStyle(.link)` gibt es unter Mac
+    /// Catalyst nicht, deshalb `NSCursor` von AppKit über die Objective-C-Laufzeit (öffentliche API,
+    /// AppKit ist in Catalyst-Apps geladen).
+    @ViewBuilder
+    func linkPointer(_ enabled: Bool = true) -> some View {
+        #if targetEnvironment(macCatalyst)
+        modifier(LinkPointer(enabled: enabled))
+        #else
+        self
+        #endif
+    }
+
+    /// Markenfarbe, in einer ausgewählten Zeile (Hintergrund in Markenfarbe, iPad und Mac) weiß.
+    /// Sonst wäre der Inhalt dort unsichtbar.
+    func brandForeground() -> some View {
+        modifier(BrandForeground())
+    }
+
+    /// Hält Listen in breiten Spalten (iPad quer, Mac, aufgeklapptes iPhone Duo) auf lesbarer Breite.
+    /// Der Rand kommt als Safe Area dazu: Hintergrund und Scrollen bleiben über die ganze Breite,
+    /// und unter `maxWidth` ändert sich nichts.
+    func readableWidth(_ maxWidth: CGFloat = 720) -> some View {
+        modifier(ReadableWidth(maxWidth: maxWidth))
+    }
+
     /// Suchfeld, ab iOS 26 unten als schwebendes Glasfeld in Reichweite des Daumens. Mit
     /// `minimized` steht dort nur eine Lupe, die Liste behält den Platz. Vor iOS 26 gäbe es unten
     /// nur eine normale Toolbar, dort bleibt das Feld oben unter dem Titel.
     @ViewBuilder
     func appSearchable(text: Binding<String>, prompt: LocalizedStringKey, minimized: Bool = false) -> some View {
+        #if targetEnvironment(macCatalyst)
+        // Der Mac hat keine Leiste unten und keinen Daumen. Das Feld steht oben in der Fensterleiste,
+        // wo man es dort erwartet.
+        searchable(text: text, prompt: Text(prompt))
+        #else
         if #available(iOS 26, *), minimized {
             // Allein stünde die Lupe mittig über dem Inhalt, rechts unten wie in Mail
             searchable(text: text, prompt: Text(prompt))
@@ -318,5 +408,63 @@ extension View {
         } else {
             searchable(text: text, placement: .navigationBarDrawer(displayMode: .always), prompt: Text(prompt))
         }
+        #endif
+    }
+}
+
+#if targetEnvironment(macCatalyst)
+/// Zu `linkPointer`. Merkt sich, ob der Handzeiger gerade auf dem Stapel von `NSCursor` liegt:
+/// Nach einem Klick auf einen Link öffnet sich eine neue Seite, und `onHover(false)` kommt oft
+/// nicht mehr. Dann nimmt `onDisappear` den Zeiger wieder herunter.
+private struct LinkPointer: ViewModifier {
+    let enabled: Bool
+    @State private var pushed = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { inside in
+                if inside && enabled { push() } else { pop() }
+            }
+            .onChange(of: enabled) { _, enabled in
+                if !enabled { pop() }
+            }
+            .onDisappear { pop() }
+    }
+
+    private static var cursorClass: NSObject.Type? { NSClassFromString("NSCursor") as? NSObject.Type }
+
+    private func push() {
+        guard !pushed, let cursor = Self.cursorClass else { return }
+        (cursor.value(forKey: "pointingHandCursor") as? NSObject)?.perform(NSSelectorFromString("push"))
+        pushed = true
+    }
+
+    private func pop() {
+        guard pushed, let cursor = Self.cursorClass else { return }
+        cursor.perform(NSSelectorFromString("pop"))
+        pushed = false
+    }
+}
+#endif
+
+private struct BrandForeground: ViewModifier {
+    /// `.increased`, wenn die Zeile ausgewählt ist und in der Markenfarbe hinterlegt wird.
+    @Environment(\.backgroundProminence) private var prominence
+
+    func body(content: Content) -> some View {
+        content.foregroundStyle(prominence == .increased ? Color.white : Color.brand)
+    }
+}
+
+private struct ReadableWidth: ViewModifier {
+    let maxWidth: CGFloat
+    @State private var margin: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .safeAreaPadding(.horizontal, margin)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                margin = max(0, (width - maxWidth) / 2)
+            }
     }
 }

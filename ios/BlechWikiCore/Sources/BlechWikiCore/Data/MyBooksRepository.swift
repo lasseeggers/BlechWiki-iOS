@@ -82,7 +82,8 @@ public final class MyBooksRepository: Sendable {
             id: book.id, title: book.title, subtitle: book.subtitle, year: book.year, editor: book.editor,
             publisher: book.publisher, publisherNumber: book.publisherNumber, coverUrl: book.coverUrl,
             isOwned: isOwned,
-            searchText: SearchNormalizer.normalize([book.title, book.subtitle, book.editor, book.publisher].compactMap { $0 }.joined(separator: " "))
+            // Mit ae/oe/ue-Varianten, damit der Filter "blaeser" wie "bläser" findet
+            searchText: SearchNormalizer.indexContent([book.title, book.subtitle, book.editor, book.publisher].compactMap { $0 }.joined(separator: " "))
         )
     }
 }

@@ -26,8 +26,8 @@ Screenshots: links Android (Galaxy S8, Android 9), rechts iOS (Simulator iPhone 
 
 - Ein Suchfeld für Liedtitel, EG-Nummer, Buch und Komponist. Wortanfänge reichen, „lob herr“ findet „Lobe den Herren“.
 - Treffer sind gruppiert: EG-Lieder, Titel, Bücher, Komponisten. EG-Lieder stehen oben.
-- Steht ein Stück in einem Buch aus dem Inventar, zeigt die Trefferliste das direkt mit Buch und Nummer an, hier „Norddeutsches Bläserheft Nr. 37, 38, 39, 40, 43“.
-- Auf iOS sitzt das Suchfeld unten, in Reichweite des Daumens.
+- Steht ein Stück in einem Buch aus dem Inventar, zeigt die Trefferliste das direkt mit Buch und Nummer an, hier „Norddeutsches Bläserheft 4 Nr. 7“.
+- Auf iOS 26 und neuer sitzt das Suchfeld unten, in Reichweite des Daumens. Auf älteren Versionen steht es oben unter dem Titel.
 
 ## Suchergebnisse
 
@@ -35,8 +35,8 @@ Screenshots: links Android (Galaxy S8, Android 9), rechts iOS (Simulator iPhone 
 |:---:|:---:|
 | <img src="screenshots/android-suchergebnisse.png" width="260" alt="Suchergebnisse Android"> | <img src="screenshots/ios-suchergebnisse.png" width="260" alt="Suchergebnisse iOS"> |
 
-- Alle Bücher, in denen ein Lied steht, mit Nummer, Bearbeiter, Besetzung und Vorzeichen.
-- Ein Tipp auf einen Bearbeiter oder Komponisten zeigt alle seine Stücke, wie die Suche nach ihm. Namen ohne Eintrag bei BlechWiki, z. B. „NN“, sind nicht verlinkt.
+- Alle Bücher, in denen ein Lied steht, mit Nummer, Bearbeiter, Besetzung und Vorzeichen. Im Bild „This little Light of mine“: 5 Bücher, 2 davon im Inventar.
+- Ein Tipp auf einen Bearbeiter oder Komponisten zeigt alle seine Stücke, wie die Suche nach ihm. Namen ohne Eintrag bei BlechWiki, etwa „NN“, sind nicht verlinkt.
 - Bei EG-Liedern zählt die Melodie. Die Liste enthält auch Sätze, die im Heft unter einem anderen Liedtext stehen.
 - Filter oben: nur Bücher aus dem Inventar oder eine bestimmte Besetzung (2+2, 3+2, 2+2+1 Solotrompete …).
 - Bücher aus dem Inventar stehen zuerst. Das Lesezeichen am Buch nimmt es ins Inventar auf oder entfernt es.

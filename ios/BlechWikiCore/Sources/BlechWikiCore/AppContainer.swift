@@ -15,8 +15,7 @@ public final class AppContainer {
     public let sync: SyncCoordinator
 
     public init(
-        api: BlechWikiAPI = SoapBlechWikiAPI(),
-        restAPI: BlechWikiRestAPI = JsonBlechWikiRestAPI(),
+        api: BlechWikiAPI = JsonBlechWikiAPI(),
         databaseURL: URL?,
         defaults: UserDefaults = .standard
     ) throws {
@@ -29,9 +28,10 @@ public final class AppContainer {
         fundstellen = FundstellenRepository(api: api, db: db)
         hymnal = HymnalRepository(db: db, settings: settings)
         sync = SyncCoordinator(
-            sync: MasterDataSync(api: api, db: db, changeLog: restAPI),
+            sync: MasterDataSync(api: api, db: db),
             fundstellen: fundstellen,
-            preferences: preferences
+            preferences: preferences,
+            db: db
         )
     }
 }

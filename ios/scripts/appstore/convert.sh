@@ -6,6 +6,8 @@
 #
 # Erwartete Exporte (Namen wie Claude Design sie vergibt, Endung @1x.png):
 #   "1 Suchergebnisse" … "5 Gesangbuch" 1320×2868
+#   "iPad 1 Suchergebnisse" …           2064×2752
+#   "Duo 1 Suchergebnisse" …            1398×2034 (iPhone Duo außen)
 #   "Kopfzeile …"                       3840×1646
 #   "Suchergebnis …"                    3840×2560
 set -euo pipefail
@@ -15,7 +17,9 @@ DST=${2:?Zielordner angeben}
 MID="$DST/iPhone Dynamic Island mittel 1206x2622"
 LARGE="$DST/iPhone Dynamic Island gross 1320x2868"
 PAGE="$DST/Produktseite"
-mkdir -p "$MID" "$LARGE" "$PAGE"
+IPAD="$DST/iPad 13 Zoll 2064x2752"
+DUO="$DST/iPhone Duo aussen 1398x2034"
+mkdir -p "$MID" "$LARGE" "$PAGE" "$IPAD" "$DUO"
 
 size() { sips -g pixelWidth -g pixelHeight "$1" | awk '/pixel/{print $2}' | xargs | tr ' ' x; }
 jpg() { sips -s format jpeg -s formatOptions 95 "$@" >/dev/null; }
@@ -26,6 +30,16 @@ for f in "$SRC"/[1-9]\ *@1x.png(N); do
   [[ $(size "$f") == 1320x2868 ]] || { echo "Übersprungen, nicht 1320x2868: ${f:t}" >&2; continue; }
   jpg "$f" --out "$LARGE/$name.jpg"
   jpg -z 2622 1206 "$f" --out "$MID/$name.jpg"
+  found=$((found + 1))
+done
+# Weitere Geräte: Name ohne Gerätepräfix, damit die Dateien wie beim iPhone "1 Suchergebnisse.jpg" heißen
+for f in "$SRC"/iPad\ [1-9]\ *@1x.png(N) "$SRC"/Duo\ [1-9]\ *@1x.png(N); do
+  name=${${${f:t}%@1x.png}#* }
+  case "${f:t}:$(size "$f")" in
+    iPad*:2064x2752) jpg "$f" --out "$IPAD/$name.jpg" ;;
+    Duo*:1398x2034) jpg "$f" --out "$DUO/$name.jpg" ;;
+    *) echo "Übersprungen, unerwartete Größe $(size "$f"): ${f:t}" >&2; continue ;;
+  esac
   found=$((found + 1))
 done
 for f in "$SRC"/Kopfzeile*@1x.png(N) "$SRC"/Suchergebnis\ *@1x.png(N); do
