@@ -14,6 +14,9 @@ final class HymnalModel {
     private let container: AppContainer
     // Sichtbare Lieder je Anlass. Nicht beobachtet, sonst zeichnete jede Zeile beim Scrollen alles neu.
     @ObservationIgnored private var visibleSongs: [String: Int] = [:]
+    /// Nach einem Sprung über das Menü bleibt der gewählte Anlass kurz fest. Sonst gewänne der Anlass
+    /// davor, dessen letzte Lieder nach dem Sprung noch unter der Toolbar liegen.
+    @ObservationIgnored private var jumpedAt: Date?
 
     init(container: AppContainer) {
         self.container = container
@@ -35,7 +38,15 @@ final class HymnalModel {
         updateCurrent()
     }
 
+    /// Sprung über das Anlass-Menü.
+    func jumped(to occasion: String) {
+        currentOccasion = occasion
+        jumpedAt = .now
+    }
+
     private func updateCurrent() {
+        // Die Zeilen, die der Sprung ein- und ausblendet, melden sich kurz danach
+        if let jumpedAt, Date.now.timeIntervalSince(jumpedAt) < 1 { return }
         let current = hymnal?.sections.first { (visibleSongs[$0.occasion] ?? 0) > 0 }?.occasion
         if current != nil, current != currentOccasion { currentOccasion = current }
     }

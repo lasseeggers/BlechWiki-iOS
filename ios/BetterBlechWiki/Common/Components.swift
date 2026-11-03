@@ -71,6 +71,12 @@ struct Chip: View {
     let systemImage: String?
     let selected: Bool
     let action: () -> Void
+    /// Zeiger über dem Chip (Mac, iPad mit Trackpad). Der Stil `.plain` zeigt das sonst nicht an.
+    @State private var hovering = false
+
+    /// Die Kapsel ist rund 32 pt hoch. Zum Tippen braucht es 44 pt, die Fläche um die Kapsel zählt mit.
+    /// Der Mac wird mit dem Zeiger bedient, dort reicht die Kapsel.
+    private static let minTapHeight: CGFloat = UIDevice.current.userInterfaceIdiom == .mac ? 0 : 44
 
     var body: some View {
         Button(action: action) {
@@ -87,10 +93,69 @@ struct Chip: View {
             .padding(.vertical, 6)
             .foregroundStyle(selected ? Color.tagForeground : Color.primary)
             .background(selected ? Color.tagBackground : Color(.secondarySystemGroupedBackground), in: Capsule())
+            .overlay {
+                if hovering { Capsule().fill(Color(.tertiarySystemFill)) }
+            }
             .overlay(Capsule().strokeBorder(selected ? Color.clear : Color(.separator)))
+            .frame(minHeight: Self.minTapHeight)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// Symbolknopf für die Toolbar auf dem Mac. Ein normaler `Button` übernimmt dort das `.tint(.brand)`
+/// der App und erscheint als blau gefüllte Hauptaktion. Mit eigenem Label wird er ein schlichter Knopf.
+struct ToolbarIconButton: View {
+    let title: String
+    let systemImage: String
+    /// Läuft die Aktion noch, dreht sich im Knopf ein Kreis, und er ist gesperrt. Ein eigener
+    /// `ProgressView` statt des Knopfs erschien in der Toolbar als leere schmale Pille.
+    var isBusy = false
+    let action: () -> Void
+
+    init(_ title: String, systemImage: String, isBusy: Bool = false, action: @escaping () -> Void) {
+        self.title = title
+        self.systemImage = systemImage
+        self.isBusy = isBusy
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if isBusy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: systemImage)
+                }
+            }
+            .toolbarIconFrame()
+        }
+        .buttonStyle(.borderless)
+        .disabled(isBusy)
+        .accessibilityLabel(isBusy ? "Wird aktualisiert" : title)
+        .help(title)
+    }
+}
+
+/// Hinweis auf einen Fehler: Text in normaler Farbe, nur das Symbol rot. Rot als Schriftfarbe
+/// (#FF3B30) erreicht auf Weiß nur 3,6:1, für kleine Schrift sind 4,5:1 nötig.
+struct WarningLabel: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Label {
+            Text(text)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+        }
     }
 }
 
@@ -103,7 +168,7 @@ struct BookmarkToggle: View {
         Button(action: onToggle) {
             Image(systemName: isOwned ? "bookmark.fill" : "bookmark")
                 .foregroundStyle(isOwned ? Color.brand : Color.secondary)
-                .frame(minWidth: 44, minHeight: 44)
+                .frame(minWidth: iconButtonSize, minHeight: iconButtonSize)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
@@ -286,26 +351,27 @@ struct CoverViewer: View {
 /// Der navigiert an `NavigationStack(path:)` vorbei und bleibt nach der Auswahl offen stehen.
 struct EgAppendixSelectionView: View {
     let settings: SettingsRepository
+    /// Im Einstellungsfenster des Macs: Die Auswahl schließt nichts, und die Liste braucht eine
+    /// Überschrift, weil das Fenster „BlechWiki-Einstellungen“ heißt.
+    let inSettingsWindow: Bool
     @Environment(\.dismiss) private var dismiss
     /// Eigener Stand für das Häkchen: Steht die Seite rechts neben der Suche, schließt `dismiss` sie
     /// nicht, und das Häkchen muss trotzdem wandern.
     @State private var selected: String?
 
-    init(settings: SettingsRepository) {
+    init(settings: SettingsRepository, inSettingsWindow: Bool = false) {
         self.settings = settings
+        self.inSettingsWindow = inSettingsWindow
         _selected = State(initialValue: (try? settings.selectedEgAppendix())?.code)
     }
 
     var body: some View {
         let appendices = (try? settings.egAppendices()) ?? []
         List {
-            Section {
-                option("Keine Angabe", code: nil, selected: selected == nil)
-                ForEach(appendices) { appendix in
-                    option(appendix.name, code: appendix.code, selected: appendix.code == selected)
-                }
-            } footer: {
-                Text("Bestimmt, welche Nummern aus den EG-Anhängen angezeigt werden, und welche Hefte wir dir vorschlagen.")
+            if inSettingsWindow {
+                Section { options(appendices) } header: { Text("Landeskirche") } footer: { footer }
+            } else {
+                Section { options(appendices) } footer: { footer }
             }
         }
         .readableWidth()
@@ -313,11 +379,23 @@ struct EgAppendixSelectionView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    @ViewBuilder
+    private func options(_ appendices: [EgAppendix]) -> some View {
+        option("Keine Angabe", code: nil, selected: selected == nil)
+        ForEach(appendices) { appendix in
+            option(appendix.name, code: appendix.code, selected: appendix.code == selected)
+        }
+    }
+
+    private var footer: some View {
+        Text("Bestimmt, welche Nummern aus den EG-Anhängen angezeigt werden, und welche Hefte wir dir vorschlagen.")
+    }
+
     private func option(_ label: String, code: String?, selected: Bool) -> some View {
         Button {
             settings.selectEgAppendix(code)
             self.selected = code
-            dismiss()
+            if !inSettingsWindow { dismiss() }
         } label: {
             HStack {
                 Text(label).foregroundStyle(Color.primary)
@@ -332,6 +410,10 @@ struct EgAppendixSelectionView: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
+
+/// Symbolknöpfe: 44 pt zum Tippen. Auf dem Mac 36 pt, so hoch wie das Suchfeld in der Toolbar. Mit
+/// 44 pt standen die Kreise dort größer als alles daneben.
+let iconButtonSize: CGFloat = UIDevice.current.userInterfaceIdiom == .mac ? 36 : 44
 
 /// "iPhone", "iPad" oder "Mac", für Texte wie „Die Suche läuft auf dem iPhone“.
 var deviceName: String {
@@ -367,6 +449,33 @@ extension View {
     func linkPointer(_ enabled: Bool = true) -> some View {
         #if targetEnvironment(macCatalyst)
         modifier(LinkPointer(enabled: enabled))
+        #else
+        self
+        #endif
+    }
+
+    /// Rechtsklick auf eine Buchzeile auf dem Mac. iPhone und iPad haben dafür die Knöpfe in der
+    /// Zeile, ein Menü bei langem Druck gibt es auch in der Android-App nicht.
+    @ViewBuilder
+    func bookContextMenu(isOwned: Bool, open: @escaping () -> Void, toggleOwned: @escaping () -> Void) -> some View {
+        #if targetEnvironment(macCatalyst)
+        contextMenu {
+            Button("Öffnen", action: open)
+            Button(isOwned ? "Aus dem Inventar entfernen" : "Zum Inventar hinzufügen",
+                   systemImage: isOwned ? "bookmark.slash" : "bookmark", action: toggleOwned)
+        }
+        #else
+        self
+        #endif
+    }
+
+    /// Symbol in der Toolbar auf dem Mac so groß wie `BookmarkToggle`, dann ist die Glasfläche dahinter
+    /// ein Kreis. Ohne legt sie sich als schmale Pille eng um das Symbol. iPhone und iPad gruppieren
+    /// die Symbole selbst.
+    @ViewBuilder
+    func toolbarIconFrame() -> some View {
+        #if targetEnvironment(macCatalyst)
+        frame(minWidth: iconButtonSize, minHeight: iconButtonSize).contentShape(Rectangle())
         #else
         self
         #endif

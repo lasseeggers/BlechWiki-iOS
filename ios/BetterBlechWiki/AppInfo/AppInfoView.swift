@@ -17,6 +17,8 @@ struct AppInfoView: View {
                 Text("Die Daten kommen von blechwiki.de. Beim Öffnen fragt die App höchstens einmal am Tag nach neuen und korrigierten Büchern, Liedern und Komponisten. Geladen wird nur, was sich geändert hat, einmal im Monat im WLAN zur Sicherheit alles. Ohne Internet bleibt der letzte Stand nutzbar.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    // Mehrzeilig klebte der Text auf dem Mac an Kartenrand und Trennlinie
+                    .macRowPadding(12)
                 LabeledContent("Zuletzt geprüft", value: lastCheckedAt?.formatted(standFormat) ?? "noch nie")
             } header: {
                 header("Aktualisierung")

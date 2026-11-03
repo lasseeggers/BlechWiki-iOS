@@ -163,12 +163,13 @@ extension AppDatabase {
         }
     }
 
-    /// EG-Lieder mit dieser Nummer in irgendeinem Teil (Stammteil oder Anhang).
+    /// EG-Lieder mit dieser Nummer in irgendeinem Teil (Stammteil oder Anhang). Die Nummern der
+    /// Ergänzungen ("Add") sind keine EG-Nummern.
     func egSongsByNumber(_ number: Int) throws -> [SearchHit] {
         try read { db in
             try db.rows("""
                 SELECT label, detail, type, refKey, refNumber FROM search_index
-                WHERE type = 0 AND refKey IN (SELECT CAST(ix AS TEXT) FROM eg_songs WHERE number = ?)
+                WHERE type = 0 AND refKey IN (SELECT CAST(ix AS TEXT) FROM eg_songs WHERE number = ? AND part <> 'Add')
                 """,
                 [.int(number)],
                 map: Self.searchHit)

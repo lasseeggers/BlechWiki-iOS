@@ -4,17 +4,21 @@ import Foundation
 enum SearchIndexBuilder {
 
     static let stammteil = "Stamm"
+    /// Lieder, die auch unter einem anderen, meist englischen Titel bekannt sind. Ihre Nummern
+    /// (601 bis 611) sind keine EG-Nummern. `ixUr` ist der `ix` des Lieds im EG.
+    static let ergaenzungen = "Add"
     private static let maxAppendixNumbers = 3
 
     /// Ein Eintrag pro Lied (`EgSongEntity.ix`), nicht pro EG-Teil.
     static func egSongEntries(_ songs: [EgSongEntity]) -> [SearchEntry] {
-        groupedInOrder(songs, by: \.ix).map { variants in
+        let byIx = Dictionary(grouping: songs, by: \.ix)
+        return groupedInOrder(songs, by: \.ix).map { variants in
             let song = variants[0]
             return SearchEntry(
                 content: SearchNormalizer.indexContent(song.title),
                 norm: SearchNormalizer.normalize(song.title),
                 label: song.title,
-                detail: egNumberLabel(variants),
+                detail: egSongDetail(variants, byIx: byIx),
                 type: .egSong,
                 refKey: String(song.ix),
                 refNumber: song.ixUr
@@ -73,7 +77,8 @@ enum SearchIndexBuilder {
 
     /// "EG 316" für den Stammteil, "EG 573" für den Anhang der eigenen Landeskirche
     /// (`appendix`), sonst z. B. "EG 573 (NB) · 612 (W)".
-    static func egNumberLabel(_ variants: [EgSongEntity], appendix: String? = nil) -> String? {
+    static func egNumberLabel(_ allVariants: [EgSongEntity], appendix: String? = nil) -> String? {
+        let variants = allVariants.filter { $0.part != ergaenzungen }
         if let stamm = variants.first(where: { $0.part == stammteil }) { return "EG \(stamm.number)" }
         // Groß-/Kleinschreibung der Teil-Kürzel ist in der API nicht einheitlich ("Ol" vs. "OL")
         if let appendix, let own = variants.first(where: { $0.part.caseInsensitiveCompare(appendix) == .orderedSame }) {
@@ -87,6 +92,16 @@ enum SearchIndexBuilder {
             return "\(group[0].number) (\(parts.joined(separator: ", ")))"
         }.joined(separator: " · ")
         return "EG \(shown)" + (byNumber.count > maxAppendixNumbers ? " …" : "")
+    }
+
+    /// Wie `egNumberLabel`. Für Lieder aus den Ergänzungen der Verweis auf das Lied im EG, z. B.
+    /// „im EG als „Komm, sag es allen weiter“, EG 225“. `byIx` muss das Lied mit `ix` = `ixUr` enthalten.
+    static func egSongDetail(_ variants: [EgSongEntity], byIx: [Int: [EgSongEntity]], appendix: String? = nil) -> String? {
+        guard let song = variants.first else { return nil }
+        if variants.contains(where: { $0.part != ergaenzungen }) { return egNumberLabel(variants, appendix: appendix) }
+        let original = (byIx[song.ixUr] ?? []).filter { $0.part != ergaenzungen }
+        guard let title = original.first?.title else { return nil }
+        return ["im EG als „\(title)“", egNumberLabel(original, appendix: appendix)].compactMap { $0 }.joined(separator: ", ")
     }
 
     /// Baut den ganzen Index und `fundstellen.titleNorm` aus den lokalen Tabellen neu, ohne Download

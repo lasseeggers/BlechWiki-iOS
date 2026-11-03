@@ -1,8 +1,7 @@
 import Foundation
 import os
 
-/// Zugriff auf die REST-API von blechwiki.de. Jede Methode ist genau ein HTTP-Request, außer
-/// `getEgAppendices`. Caching passiert eine Schicht höher. Alle Fehler kommen als `BlechWikiError`.
+/// Zugriff auf die REST-API von blechwiki.de. Jede Methode ist genau ein HTTP-Request. Caching passiert eine Schicht höher. Alle Fehler kommen als `BlechWikiError`.
 public protocol BlechWikiAPI: Sendable {
 
     /// Titel, Bücher und Komponisten sind Nachschlagetabellen mit Änderungszähler. `after` = 0
@@ -20,7 +19,9 @@ public protocol BlechWikiAPI: Sendable {
     /// Alle EG-Lieder, ein Eintrag je Lied und Teil. Statisch, ohne Änderungszähler.
     func getEgSongs() async throws -> [EgSongDto]
 
-    /// Landeskirchliche Anhänge plus Stammteil. Die API hat dafür keinen Endpunkt, die Liste ist fest.
+    /// Teile des EG: Stammteil, landeskirchliche Anhänge und "Add" (Lieder, die unter einem
+    /// anderen, meist englischen Titel bekannt sind). Ist der Endpunkt nicht lesbar, kommt eine
+    /// eingebaute Liste.
     func getEgAppendices() async throws -> [EgAppendixDto]
 
     /// `ix` ist `TitleDto.ix`.
@@ -42,7 +43,7 @@ public final class JsonBlechWikiAPI: BlechWikiAPI {
     /// Schickt einen Request und liefert Body und Statuscode. Austauschbar für Tests.
     public typealias Transport = @Sendable (URLRequest) async throws -> (Data, Int)
 
-    public static let defaultBaseURL = URL(string: "https://pcportal.ddns.net/RestBlechWiki/api/")!
+    public static let defaultBaseURL = URL(string: "https://pcportal.ddns.net/RestBlechWiki1/api/")!
     /// "BlechWiki-iOS/1.0.0", Version aus dem Bundle von App bzw. Share Extension.
     public static let defaultUserAgent =
         "BlechWiki-iOS/\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0")"
@@ -52,8 +53,9 @@ public final class JsonBlechWikiAPI: BlechWikiAPI {
     /// Cover gibt es als `mini60/`, `mini120/`, `mini240/` und im Original, siehe `CoverUrls`.
     private static let coverBaseURL = "https://teddymuetze.ddns.net/Bilder/BilderBuch/mini60/"
 
-    /// Stand der früheren SOAP-Methode `GetEGLkAnhänge` vom 27.10.2026.
+    /// Rückfall für `getEgAppendices`, Stand `EG?anhaenge=true` vom 03.11.2026.
     private static let egAppendices = [
+        EgAppendixDto(code: "Add", name: "Ergänzungen"),
         EgAppendixDto(code: "BEL", name: "Baden/Elsaß/Lothringen"),
         EgAppendixDto(code: "BT", name: "Bayern/Thüringen"),
         EgAppendixDto(code: "HN", name: "Hessen-Nassau"),
@@ -160,7 +162,23 @@ public final class JsonBlechWikiAPI: BlechWikiAPI {
         }
     }
 
-    public func getEgAppendices() async throws -> [EgAppendixDto] { Self.egAppendices }
+    public func getEgAppendices() async throws -> [EgAppendixDto] {
+        do {
+            let appendices = try await get(["EG"], [("anhaenge", "true")]) { json in
+                try Self.rows(json, "EG") { row in
+                    EgAppendixDto(
+                        code: try row.text("EGTeilkurz").trimmingCharacters(in: .whitespaces),
+                        name: try row.text("EGTeil").trimmingCharacters(in: .whitespaces)
+                    )
+                }
+            }
+            return appendices.isEmpty ? Self.egAppendices : appendices
+        } catch let error as BlechWikiError {
+            // Ohne Liste der Landeskirchen soll nicht der ganze Abgleich scheitern
+            Self.log.warning("EG-Teile nicht geladen, nehme die eingebaute Liste: \(String(describing: error))")
+            return Self.egAppendices
+        }
+    }
 
     public func getFundstellenByTitle(_ ix: Int) async throws -> [FundstelleDto] {
         try await getFundstellen("Titel", String(ix))

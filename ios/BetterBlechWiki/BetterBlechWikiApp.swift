@@ -78,6 +78,13 @@ struct BetterBlechWikiApp: App {
         .onChange(of: network.isUnmetered) { _, unmetered in
             if unmetered && scenePhase == .active { container.sync.onAppActive(unmetered: true) }
         }
+
+        #if targetEnvironment(macCatalyst)
+        WindowGroup("BlechWiki-Einstellungen", id: SettingsWindow.id, for: String.self) { _ in
+            SettingsWindow(settings: container.settings)
+                .tint(.brand)
+        }
+        #endif
     }
 }
 
@@ -214,6 +221,9 @@ struct RootView: View {
     @SceneStorage("root.selection") private var savedSelection: Data?
     @SceneStorage("root.path") private var savedPath: Data?
     @State private var restored = false
+    #if DEBUG
+    @Environment(\.openWindow) private var openWindow
+    #endif
 
     /// Neue Auswahl leert die Seiten rechts im selben Schritt und ohne Animation. Erst in
     /// `onChange` geleert, lag auf dem iPad kurz das alte Buch über der neuen Seite und rutschte
@@ -244,6 +254,11 @@ struct RootView: View {
                         ContentUnavailableView {
                             Label("BlechWiki", systemImage: "music.note.list")
                         } description: {
+                            #if targetEnvironment(macCatalyst)
+                            // Auf dem Mac steht die Einführung hier statt oben in der Seitenleiste,
+                            // wo sie in der schmalen Spalte umbrach
+                            Text(SearchView.intro)
+                            #endif
                             Text("Wähle links ein Suchergebnis, das Inventar oder das Gesangbuch.")
                         }
                     }
@@ -257,6 +272,12 @@ struct RootView: View {
         // und verschwände nach jeder Auswahl.
         .navigationSplitViewStyle(.balanced)
         .environment(\.openRoute, OpenRouteAction { path.append($0) })
+        .focusedSceneValue(\.windowNavigation, WindowNavigation(
+            select: { selectionBinding.wrappedValue = $0 },
+            back: path.isEmpty ? nil : { path.removeLast() },
+            sidebarVisible: columns != .detailOnly,
+            toggleSidebar: { columns = columns == .detailOnly ? .all : .detailOnly }
+        ))
         .onAppear(perform: restore)
         .onChange(of: selection) { _, selection in
             savedSelection = selection.flatMap { try? JSONEncoder().encode($0) }
@@ -268,7 +289,8 @@ struct RootView: View {
         // Für Screenshots im Simulator: BBW_OPEN = "mybooks", "hymnal", "appinfo", "eg:<ixUr>", "book:<BuchId>" oder "title:<Titel>".
         // BBW_LABEL und BBW_DETAIL setzen Überschrift und Unterzeile wie beim Öffnen aus der Suche.
         // Für die Mac-Bilder, deren Einstellungen kein Skript erreicht: BBW_OWNED = Buch-IDs mit Komma
-        // (ersetzt das Inventar), BBW_APPENDIX = Code der Landeskirche, BBW_WINDOW = "1440x900"
+        // (ersetzt das Inventar), BBW_APPENDIX = Code der Landeskirche, BBW_WINDOW = "1440x900",
+        // BBW_SETTINGS = 1 öffnet zusätzlich das Einstellungsfenster
         .task {
             let env = ProcessInfo.processInfo.environment
             if let owned = env["BBW_OWNED"] {
@@ -282,6 +304,7 @@ struct RootView: View {
                 scene.sizeRestrictions?.minimumSize = CGSize(width: size[0], height: size[1])
                 scene.sizeRestrictions?.maximumSize = CGSize(width: size[0], height: size[1])
             }
+            if env["BBW_SETTINGS"] != nil { openWindow(id: SettingsWindow.id, value: SettingsWindow.id) }
             #endif
             guard let open = env["BBW_OPEN"] else { return }
             let parts = open.split(separator: ":", maxSplits: 1).map(String.init)
@@ -351,16 +374,3 @@ enum InventoryImportSignal {
     }
 }
 
-/// Menübefehle auf dem Mac. Ein eigenes ⌘F für das Suchfeld gibt es bewusst nicht: UIKit legt
-/// „Suchen“ (find:) mit ⌘F selbst ins Menü „Bearbeiten“, SwiftUI kann es nicht ersetzen, und zwei
-/// Befehle auf ⌘F wären laut UIKit undefiniert.
-struct AppCommands: Commands {
-    static let issuesURL = URL(string: "https://github.com/lasseeggers/BlechWiki-iOS/issues")!
-
-    var body: some Commands {
-        // Statt „Hilfe ist nicht verfügbar“
-        CommandGroup(replacing: .help) {
-            Button("Fehler melden") { UIApplication.shared.open(Self.issuesURL) }
-        }
-    }
-}

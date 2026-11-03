@@ -3,6 +3,8 @@ import SwiftUI
 
 struct SearchView: View {
 
+    static let intro: LocalizedStringKey = "Suche nach Liedtitel, EG-Nummer, Buch oder Komponist. Die Suche läuft auf dem \(deviceName) und funktioniert auch ohne Internet."
+
     let container: AppContainer
     /// Gewählte Zeile. Bleibt markiert, solange ihre Seite rechts daneben steht.
     @Binding var selection: Route?
@@ -18,7 +20,8 @@ struct SearchView: View {
     var body: some View {
         let model = box { SearchModel(container: container, query: savedQuery) }
         content(model)
-            .navigationTitle("BlechWiki")
+            // Auf dem Mac stünde der App-Name sonst als Fenstertitel da, solange rechts nichts gewählt ist
+            .navigationTitle(UIDevice.current.userInterfaceIdiom == .mac ? "" : "BlechWiki")
             // Kurz halten: Auf schmalen Geräten passen ~25 Zeichen
             .appSearchable(text: Bindable(model).query, prompt: "Lied, EG-Nr. oder Buch")
             .autocorrectionDisabled()
@@ -62,7 +65,7 @@ private struct ResultList: View {
             section("Bücher", results.books)
             section("Komponisten", results.composers)
         }
-        .listStyle(.plain)
+        .modifier(ResultListStyle())
         .scrollDismissesKeyboard(.immediately)
     }
 
@@ -72,13 +75,27 @@ private struct ResultList: View {
             Section {
                 ForEach(items, id: \.self) { result in
                     NavigationLink(value: Route.fundstellen(FundstellenRoute(result))) {
-                        ResultRow(result: result, detailAsOverline: detailAsOverline)
+                        // Abstand wie auf der Startseite, sonst klebt die Markierung am Text
+                        ResultRow(result: result, detailAsOverline: detailAsOverline).macRowPadding(5)
                     }
                 }
             } header: {
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Color.brand)
             }
         }
+    }
+}
+
+/// Auf dem Mac derselbe Stil wie die Startseite in dieser Spalte: Die gewählte Zeile ist eingerückt
+/// und abgerundet markiert wie in Finder und Mail. Mit `.plain` reichte die Markierung bis an den Rand,
+/// und Treffer und Startseite sahen gewählt verschieden aus.
+private struct ResultListStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        #if targetEnvironment(macCatalyst)
+        content.listStyle(.insetGrouped)
+        #else
+        content.listStyle(.plain)
+        #endif
     }
 }
 
@@ -152,9 +169,9 @@ private struct StartView: View {
                 Section { appInfoLink }
             } else {
                 // Mit eigenem Abstand oben und unten, sonst sitzt der Auswahlhintergrund dicht am Text,
-                // auffällig beim vierzeiligen Hinweis unter „Inventar“
+                // auffällig beim vierzeiligen Hinweis unter „Inventar“. Die Einführung steht auf dem
+                // Mac rechts in der leeren Seite, in der schmalen Spalte brach sie mitten im Wort um.
                 Section {
-                    intro.macRowPadding(5)
                     myBooksLink.macRowPadding(5)
                     hymnalLink.macRowPadding(5)
                     appendixLink.macRowPadding(5)
@@ -171,13 +188,11 @@ private struct StartView: View {
         .scrollDismissesKeyboard(.immediately)
     }
 
-    static let intro: LocalizedStringKey = "Suche nach Liedtitel, EG-Nummer, Buch oder Komponist. Die Suche läuft auf dem \(deviceName) und funktioniert auch ohne Internet."
-
     // Intro im Inhalt statt in einem eigenen Großtitel (Toolbar-Platz `.largeTitle`).
     // Der nahm nicht an der Navigations-Animation teil: Er blieb über der nächsten Seite
     // stehen, bis sie ganz offen war, und der Intro-Text sprang beim Zurückkommen um.
     private var intro: some View {
-        Text(Self.intro).font(.subheadline).foregroundStyle(.secondary)
+        Text(SearchView.intro).font(.subheadline).foregroundStyle(.secondary)
     }
 
     private var myBooksLink: some View {

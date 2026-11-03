@@ -122,6 +122,23 @@ struct RestAPITests {
         #expect((0..<4).map(fake.target) == ["Titel/10374", "EG/859", "Buch/4035", "Komponist/2000"])
     }
 
+    @Test func egTeile() async throws {
+        let fake = FakeTransport(#"[{"EGTeilkurz":"Add","EGTeil":"Ergänzungen"},{"EGTeilkurz":"NB","EGTeil":"Niedersachsen/Bremen"}]"#)
+        #expect(try await fake.api.getEgAppendices() == [
+            EgAppendixDto(code: "Add", name: "Ergänzungen"),
+            EgAppendixDto(code: "NB", name: "Niedersachsen/Bremen"),
+        ])
+        #expect(fake.target(0) == "EG?anhaenge=true")
+    }
+
+    @Test func egTeileBeiFehlerAusDerEingebautenListe() async throws {
+        for fake in [FakeTransport(#"{"Message":"Fehler"}"#, status: 500), FakeTransport("[]")] {
+            let appendices = try await fake.api.getEgAppendices()
+            #expect(appendices.count == 15)
+            #expect(appendices.first { $0.code == "NB" }?.name == "Niedersachsen/Bremen")
+        }
+    }
+
     @Test func fehler() async throws {
         await #expect(throws: BlechWikiError.httpError(500)) {
             try await FakeTransport(#"{"Message":"Fehler"}"#, status: 500).api.getFundstellenByBook("999999")

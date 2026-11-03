@@ -17,6 +17,7 @@ final class StubAPI: BlechWikiAPI, @unchecked Sendable {
         EgSongDto(ix: 316, ixUr: 859, title: "Lobe den Herren, den mächtigen König der Ehren", part: "Stamm", number: 316, occasion: nil),
         EgSongDto(ix: 900, ixUr: 900, title: "Ein Lied aus Niedersachsen", part: "NB", number: 600, occasion: nil),
         EgSongDto(ix: 901, ixUr: 901, title: "Ein Lied aus Bayern", part: "BT", number: 600, occasion: nil),
+        EgSongDto(ix: 1317, ixUr: 316, title: "Go, tell it on the mountain", part: "Add", number: 602, occasion: "Abendmahl"),
     ]
     var books = [
         BookDto(id: "2271", title: "Bläserheft 2022 Bayern", subtitle: "Alte und neue Bläsermusik", year: 2022, editor: nil, editorFirstName: nil,
@@ -27,7 +28,10 @@ final class StubAPI: BlechWikiAPI, @unchecked Sendable {
     var composers = [
         ComposerDto(id: "1", name: "Fünfgeld, Traugott", born: "1971", died: nil, isAlias: false, deleted: false, changeCounter: 78),
     ]
-    var appendices = [EgAppendixDto(code: "Stamm", name: "Stammteil"), EgAppendixDto(code: "W", name: "Württemberg"), EgAppendixDto(code: "Ö", name: "Österreich")]
+    var appendices = [
+        EgAppendixDto(code: "Stamm", name: "Stammteil"), EgAppendixDto(code: "Add", name: "Ergänzungen"),
+        EgAppendixDto(code: "W", name: "Württemberg"), EgAppendixDto(code: "Ö", name: "Österreich"),
+    ]
     var fundstellenCalls: [String] = []
     /// Abrufe der Stammdaten, ohne Fundstellen.
     var calls: [String] = []
@@ -127,6 +131,15 @@ struct RepositoryTests {
         let results = try c.search.search("600")
         #expect(results.egSongs.map(\.label) == ["Ein Lied aus Bayern", "Ein Lied aus Niedersachsen"])
         #expect(results.egSongs.first?.detail == "EG 600")
+    }
+
+    @Test func ergaenzungVerweistAufDasLiedImEG() async throws {
+        let c = try await container()
+        let hit = try #require(try c.search.search("go tell it").egSongs.first)
+        #expect(hit.detail == "im EG als „Lobe den Herren, den mächtigen König der Ehren“, EG 316")
+        #expect(hit.query == .byEgMelody(316))
+        // Die Nummern der Ergänzungen sind keine EG-Nummern
+        #expect(try c.search.search("602").egSongs.isEmpty)
     }
 
     @Test func inventarTrefferInDerSuche() async throws {

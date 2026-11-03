@@ -31,7 +31,7 @@ struct HymnalView: View {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 0) {
                     Text("Gesangbuch").font(.headline)
-                    Text(model.hymnal?.appendix.map { "Stammteil und Anhang \($0.name)" } ?? "Stammteil")
+                    Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -41,9 +41,39 @@ struct HymnalView: View {
         .task { await model.observe() }
     }
 
+    private var subtitle: String {
+        model.hymnal?.appendix.map { "Stammteil und Anhang \($0.name)" } ?? "Stammteil"
+    }
+
+    /// Mac: Anlässe als normale Zeilen statt als Abschnittsköpfe. Abschnittsköpfe bleiben beim Scrollen
+    /// oben stehen, und unter Catalyst blieb ihr heller Hintergrund nach dem Zurückscrollen über dem
+    /// Listenanfang liegen. Den aktuellen Anlass zeigt dort der Knopf in der Toolbar.
+    private static let headersAsRows = UIDevice.current.userInterfaceIdiom == .mac
+
+    private func songs(_ section: HymnalSection) -> some View {
+        ForEach(section.songs) { song in
+            NavigationLink(value: Route.fundstellen(FundstellenRoute(
+                query: .byEgMelody(song.ixUr), label: song.title, detail: "EG \(song.number)"
+            ))) {
+                SongRow(song: song)
+            }
+            .onAppear { model.songAppeared(in: section.occasion) }
+            .onDisappear { model.songDisappeared(in: section.occasion) }
+        }
+    }
+
+    private func jump(to occasion: String, _ proxy: ScrollViewProxy) {
+        model.jumped(to: occasion)
+        proxy.scrollTo(occasion, anchor: .top)
+    }
+
     private func list(_ hymnal: Hymnal) -> some View {
         ScrollViewReader { proxy in
             List {
+                // Catalyst zeigt den Titel mit Unterzeile (`.principal`) nicht, dort steht die Unterzeile hier
+                if UIDevice.current.userInterfaceIdiom == .mac {
+                    Text(subtitle).font(.subheadline).foregroundStyle(.secondary).listRowSeparator(.hidden)
+                }
                 if hymnal.appendix == nil {
                     NavigationLink(value: Route.egAppendix) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -52,33 +82,41 @@ struct HymnalView: View {
                         }
                     }
                 }
-                // Echte Abschnitte: Die Überschrift bleibt beim Scrollen oben stehen und zeigt,
-                // wo man gerade ist, wie in Kontakte oder den Einstellungen.
                 ForEach(hymnal.sections) { section in
-                    Section {
-                        ForEach(section.songs) { song in
-                            NavigationLink(value: Route.fundstellen(FundstellenRoute(
-                                query: .byEgMelody(song.ixUr), label: song.title, detail: "EG \(song.number)"
-                            ))) {
-                                SongRow(song: song)
-                            }
-                            .onAppear { model.songAppeared(in: section.occasion) }
-                            .onDisappear { model.songDisappeared(in: section.occasion) }
-                        }
-                    } header: {
+                    if Self.headersAsRows {
                         Text(section.occasion)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 8)
+                            .listRowSeparator(.hidden)
+                            .id(section.occasion)
+                        songs(section)
+                    } else {
+                        // Echte Abschnitte: Die Überschrift bleibt beim Scrollen oben stehen und zeigt,
+                        // wo man gerade ist, wie in Kontakte oder den Einstellungen.
+                        Section {
+                            songs(section)
+                        } header: {
+                            Text(section.occasion)
+                        }
+                        .id(section.occasion)
                     }
-                    .id(section.occasion)
                 }
             }
             .listStyle(.plain)
             .readableWidth()
+            .focusedSceneValue(\.pageCommands, PageCommands(
+                occasions: hymnal.sections.map(\.occasion),
+                currentOccasion: model.currentOccasion,
+                jumpToOccasion: { jump(to: $0, proxy) }
+            ))
             .toolbar {
                 // Rund 40 Anlässe und 600 Lieder: Ohne Sprungmöglichkeit wäre „Abend“ weit unten
                 ToolbarItem(placement: .topBarTrailing) {
-                    OccasionMenu(sections: hymnal.sections, current: model.currentOccasion) { occasion in
-                        proxy.scrollTo(occasion, anchor: .top)
-                    }
+                    OccasionMenu(sections: hymnal.sections, current: model.currentOccasion) { jump(to: $0, proxy) }
+                        // Die Mac-Toolbar übernimmt einen geänderten Text im Menüknopf nicht, mit neuer
+                        // ID baut SwiftUI ihn neu auf
+                        .id(UIDevice.current.userInterfaceIdiom == .mac ? model.currentOccasion : nil)
                 }
             }
             #if DEBUG
@@ -86,7 +124,7 @@ struct HymnalView: View {
             .task {
                 guard let occasion = ProcessInfo.processInfo.environment["BBW_JUMP"] else { return }
                 try? await Task.sleep(for: .milliseconds(500))
-                proxy.scrollTo(occasion, anchor: .top)
+                jump(to: occasion, proxy)
             }
             #endif
         }
@@ -112,9 +150,16 @@ private struct OccasionMenu: View {
                 }
             }
         } label: {
-            Label("Anlass", systemImage: "list.bullet")
+            if UIDevice.current.userInterfaceIdiom == .mac {
+                // Auf dem Mac bleibt die Überschrift des Anlasses beim Scrollen nicht stehen, der Knopf
+                // zeigt dafür, wo man gerade ist
+                Text(current ?? "Anlass")
+            } else {
+                Label("Anlass", systemImage: "list.bullet")
+            }
         }
         .accessibilityLabel("Anlass wählen")
+        .accessibilityValue(current ?? "")
     }
 
     /// "Nr. 1–22 · 3 aus dem Anhang", für Anlässe nur im Anhang "Nr. 600–610 im Anhang".

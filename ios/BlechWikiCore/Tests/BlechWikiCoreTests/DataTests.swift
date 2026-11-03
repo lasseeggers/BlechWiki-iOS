@@ -228,6 +228,20 @@ struct SearchIndexBuilderTests {
         EgSongEntity(ix: ix, ixUr: ix, title: "Lied", part: part, number: number, occasion: nil)
     }
 
+    @Test func ergaenzungZeigtDasLiedImEG() {
+        let add = EgSongEntity(ix: 1320, ixUr: 316, title: "It's me, oh Lord", part: "Add", number: 605, occasion: nil)
+        let original = ["R", "RWL"].map {
+            EgSongEntity(ix: 316, ixUr: 316, title: "Du, Herr, gabst uns dein festes Wort", part: $0, number: 570, occasion: nil)
+        }
+        let byIx = Dictionary(grouping: original + [add], by: \.ix)
+        #expect(SearchIndexBuilder.egSongDetail([add], byIx: byIx)
+            == "im EG als „Du, Herr, gabst uns dein festes Wort“, EG 570 (R, RWL)")
+        #expect(SearchIndexBuilder.egSongDetail([add], byIx: byIx, appendix: "RWL")
+            == "im EG als „Du, Herr, gabst uns dein festes Wort“, EG 570")
+        #expect(SearchIndexBuilder.egNumberLabel([add]) == nil)
+        #expect(SearchIndexBuilder.egSongDetail([add], byIx: [:]) == nil)
+    }
+
     @Test func egNumberLabel() {
         #expect(SearchIndexBuilder.egNumberLabel([song("NB", 600), song("Stamm", 316)]) == "EG 316")
         #expect(SearchIndexBuilder.egNumberLabel([song("P", 673), song("BEL", 673), song("W", 612)])

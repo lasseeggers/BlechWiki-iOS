@@ -61,7 +61,7 @@ public struct TableRows<T: Sendable>: Sendable {
 extension TableRows: Equatable where T: Equatable {}
 
 public struct EgAppendixDto: Equatable, Sendable {
-    /// z. B. "NB", "Stamm".
+    /// z. B. "NB", "Stamm", "Add".
     public var code: String
     public var name: String
 }
@@ -71,7 +71,7 @@ public struct EgSongDto: Equatable, Sendable {
     /// Melodie, Schlüssel für die Fundstellen. Gleich für alle Lieder nach derselben Melodie.
     public var ixUr: Int
     public var title: String
-    /// Teil-Kürzel wie in `EgAppendixDto.code`, zusätzlich "Add".
+    /// Teil-Kürzel wie in `EgAppendixDto.code`.
     /// Schreibweise nicht immer wie dort ("Ol" vs. "OL").
     public var part: String
     /// Liednummer im jeweiligen Teil.

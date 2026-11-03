@@ -5,6 +5,10 @@ struct MyBooksView: View {
 
     let container: AppContainer
     @State private var box = ModelBox<MyBooksModel>()
+    @Environment(\.openRoute) private var openRoute
+
+    /// Mac: Umschalter „Alle Bücher | Inventar“ in der Toolbar statt über der Liste, wie dort üblich.
+    private static let pickerInToolbar = UIDevice.current.userInterfaceIdiom == .mac
 
     init(container: AppContainer) {
         self.container = container
@@ -34,13 +38,29 @@ struct MyBooksView: View {
         .autocorrectionDisabled()
         .textInputAutocapitalization(.never)
         .toolbar {
+            // `.principal` zeigt Catalyst nicht an, daher rechts vor den Knöpfen. Ohne eigene Glasfläche:
+            // Der Umschalter bringt seine Spur selbst mit, in der Glaskapsel der Toolbar war er doppelt gerahmt.
+            if Self.pickerInToolbar && model.sections != nil {
+                if #available(iOS 26, *) {
+                    ToolbarItem(placement: .topBarTrailing) { displayPicker.fixedSize() }
+                        .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) { displayPicker.fixedSize() }
+                }
+            }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if let message = model.shareMessage {
                     ShareLink(item: message) {
-                        Image(systemName: "square.and.arrow.up")
+                        Image(systemName: "square.and.arrow.up").toolbarIconFrame()
                     }
+                    // Ohne eigenen Stil färbte die Mac-Toolbar den Knopf als Hauptaktion in der Markenfarbe
+                    .buttonStyle(.borderless)
                     .accessibilityLabel("Inventar teilen")
                 }
+                #if targetEnvironment(macCatalyst)
+                // Ein Menü mit nur einem Eintrag wäre ein Klick zu viel. Der Befehl steht auch im Menü „Inventar“.
+                ToolbarIconButton("Inventar-Code einfügen", systemImage: "doc.on.clipboard") { model.openImport() }
+                #else
                 // Selten gebraucht, daher im Menü
                 Menu {
                     Button("Inventar-Code einfügen", systemImage: "doc.on.clipboard") { model.openImport() }
@@ -48,8 +68,10 @@ struct MyBooksView: View {
                     Image(systemName: "ellipsis.circle")
                 }
                 .accessibilityLabel("Weitere Optionen")
+                #endif
             }
         }
+        .focusedSceneValue(\.pageCommands, PageCommands(shareMessage: model.shareMessage, importCode: model.openImport))
         .sheet(isPresented: Binding(get: { model.importText != nil }, set: { if !$0 { model.closeImport() } })) {
             ImportSheet(model: model)
         }
@@ -59,15 +81,16 @@ struct MyBooksView: View {
     private func bookList(_ sections: BookSections) -> some View {
         @Bindable var model = model
         return List {
-            Section {
-                Picker("Anzeige", selection: $model.onlySelected) {
-                    Text("Alle Bücher").tag(false)
-                    Text("Inventar (\(model.offline.owned))").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .listRowSeparator(.hidden)
-            } footer: {
+            if Self.pickerInToolbar {
+                // Steht der Umschalter in der Toolbar, wäre der Abschnitt leer. Seine Fußzeile verblasste
+                // dann nach dem Scrollen unter dem mitlaufenden Kopf „Vorschläge für …“. Als Zeile nicht.
                 Text(offlineLabel)
+            } else {
+                Section {
+                    displayPicker.listRowSeparator(.hidden)
+                } footer: {
+                    Text(offlineLabel)
+                }
             }
 
             if let filtered = sections.filtered {
@@ -86,7 +109,7 @@ struct MyBooksView: View {
                     .foregroundStyle(.secondary)
                 if let appendix = model.selectedAppendix {
                     if !sections.suggested.isEmpty {
-                        Section(header: sectionHeader("Vorschläge für \(appendix.name)")) { books(sections.suggested) }
+                        bookSection("Vorschläge für \(appendix.name)", sections.suggested)
                     }
                 } else {
                     NavigationLink(value: Route.egAppendix) {
@@ -97,14 +120,23 @@ struct MyBooksView: View {
                     }
                 }
                 if !sections.choralBooks.isEmpty {
-                    Section(header: sectionHeader("Choralbücher")) { books(sections.choralBooks) }
+                    bookSection("Choralbücher", sections.choralBooks)
                 }
-                Section(header: sectionHeader("Alle Bücher, neueste zuerst")) { books(sections.all) }
+                bookSection("Alle Bücher, neueste zuerst", sections.all)
             }
         }
         .listStyle(.plain)
         .readableWidth()
         .scrollDismissesKeyboard(.immediately)
+    }
+
+    private var displayPicker: some View {
+        @Bindable var model = model
+        return Picker("Anzeige", selection: $model.onlySelected) {
+            Text("Alle Bücher").tag(false)
+            Text("Inventar (\(model.offline.owned))").tag(true)
+        }
+        .pickerStyle(.segmented)
     }
 
     private var offlineLabel: String {
@@ -123,6 +155,19 @@ struct MyBooksView: View {
             .compactMap { $0 }.filter { seen.insert($0).inserted }.joined(separator: " · ")
     }
 
+    /// Mac: Überschrift als normale Zeile statt als Abschnittskopf. Abschnittsköpfe bleiben beim Scrollen
+    /// oben stehen, und unter Catalyst blieb ihr heller Hintergrund nach dem Zurückscrollen über dem
+    /// Listenanfang liegen.
+    @ViewBuilder
+    private func bookSection(_ title: String, _ items: [BookItem]) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .mac {
+            sectionHeader(title).padding(.top, 8).listRowSeparator(.hidden)
+            books(items)
+        } else {
+            Section(header: sectionHeader(title)) { books(items) }
+        }
+    }
+
     private func sectionHeader(_ title: String) -> some View {
         Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Color.brand)
     }
@@ -134,7 +179,8 @@ struct MyBooksView: View {
     /// Tipp auf das Buch öffnet seinen Inhalt, Tipp auf den Kreis nimmt es ins Inventar auf oder entfernt es.
     private func books(_ books: [BookItem]) -> some View {
         ForEach(books) { book in
-            NavigationLink(value: Route.fundstellen(FundstellenRoute(query: .byBook(book.id), label: book.title, detail: book.subtitle))) {
+            let route = Route.fundstellen(FundstellenRoute(query: .byBook(book.id), label: book.title, detail: book.subtitle))
+            NavigationLink(value: route) {
                 HStack(spacing: 12) {
                     Button { model.toggle(book) } label: {
                         Image(systemName: book.isOwned ? "checkmark.circle.fill" : "circle")
@@ -157,6 +203,7 @@ struct MyBooksView: View {
             }
             .alignmentGuide(.listRowSeparatorLeading) { _ in 56 }
             .accessibilityAddTraits(book.isOwned ? .isSelected : [])
+            .bookContextMenu(isOwned: book.isOwned, open: { openRoute(route) }, toggleOwned: { model.toggle(book) })
         }
     }
 }
@@ -232,9 +279,9 @@ private struct ImportSheet: View {
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Text("Code oder ganze Nachricht einfügen")
         } else if model.importPreview == .noCode {
-            Text("Kein Code gefunden. Er beginnt mit BBW-.").foregroundStyle(.red)
+            WarningLabel("Kein Code gefunden. Er beginnt mit BBW-.")
         } else if model.importPreview == .invalid {
-            Text("Code unvollständig oder verändert. Bitte neu kopieren.").foregroundStyle(.red)
+            WarningLabel("Code unvollständig oder verändert. Bitte neu kopieren.")
         }
     }
 
@@ -263,11 +310,11 @@ private struct UnknownBooksHint: View {
                 Text("\(subject) noch nicht im Verzeichnis. Suche bei BlechWiki nach neuen Büchern …").font(.subheadline)
             }
         case .done:
-            Text("\(subject) auch im aktuellen Verzeichnis nicht zu finden. Vermutlich wurde der Code verändert.")
-                .font(.subheadline).foregroundStyle(.red)
+            WarningLabel("\(subject) auch im aktuellen Verzeichnis nicht zu finden. Vermutlich wurde der Code verändert.")
+                .font(.subheadline)
         case .failed:
-            Text("\(subject) nicht im Verzeichnis. BlechWiki ist gerade nicht erreichbar. Code später noch einmal einfügen.")
-                .font(.subheadline).foregroundStyle(.red)
+            WarningLabel("\(subject) nicht im Verzeichnis. BlechWiki ist gerade nicht erreichbar. Code später noch einmal einfügen.")
+                .font(.subheadline)
         }
     }
 }

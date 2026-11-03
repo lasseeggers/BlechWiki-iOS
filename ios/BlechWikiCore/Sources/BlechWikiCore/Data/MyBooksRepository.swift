@@ -98,11 +98,11 @@ public final class SettingsRepository: Sendable {
         self.preferences = preferences
     }
 
-    /// EG-Anhänge der Landeskirchen, ohne den Stammteil, deutsch sortiert.
+    /// EG-Anhänge der Landeskirchen, ohne Stammteil und Ergänzungen, deutsch sortiert.
     public func egAppendices() throws -> [EgAppendix] {
         let german = Locale(identifier: "de_DE")
         return try db.egAppendices()
-            .filter { $0.code != SearchIndexBuilder.stammteil }
+            .filter { $0.code != SearchIndexBuilder.stammteil && $0.code != SearchIndexBuilder.ergaenzungen }
             .map { EgAppendix(code: $0.code, name: $0.name) }
             // SQLite sortiert "Österreich" sonst hinter "Württemberg"
             .sorted { $0.name.compare($1.name, locale: german) == .orderedAscending }

@@ -28,7 +28,10 @@ public final class SearchRepository: Sendable {
 
         let appendix = preferences.egAppendix
         let owned = preferences.ownedBookIds
-        let variants = Dictionary(grouping: try db.egSongs(ixs: rawEg.compactMap { Int($0.refKey) }), by: \.ix)
+        // Mit den Liedern, auf die Ergänzungen verweisen (ix = ixUr)
+        var seenIx = Set<Int>()
+        let ixs = rawEg.flatMap { [Int($0.refKey), $0.refNumber].compactMap { $0 } }.filter { seenIx.insert($0).inserted }
+        let variants = Dictionary(grouping: try db.egSongs(ixs: ixs), by: \.ix)
         func variantsOf(_ hit: SearchHit) -> [EgSongEntity] { Int(hit.refKey).flatMap { variants[$0] } ?? [] }
 
         var eg = rawEg
@@ -50,7 +53,7 @@ public final class SearchRepository: Sendable {
         var results = SearchResults()
         results.egSongs = eg.map { hit in
             var result = toResult(hit)
-            result.detail = SearchIndexBuilder.egNumberLabel(variantsOf(hit), appendix: appendix) ?? hit.detail
+            result.detail = SearchIndexBuilder.egSongDetail(variantsOf(hit), byIx: variants, appendix: appendix) ?? hit.detail
             result.ownedLocations = locations(hit.label)
             return result
         }

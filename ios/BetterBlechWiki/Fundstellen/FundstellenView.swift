@@ -10,7 +10,7 @@ struct FundstellenView: View {
     // die Überschrift weggescrollt ist oder es noch keine Liste gibt.
     @State private var headerVisible = true
     @State private var showCover = false
-    /// Mac: Aktualisieren über Knopf oder ⌘R läuft, statt des Knopfs dreht sich ein Kreis.
+    /// Mac: Aktualisieren über Knopf oder ⌘R läuft, im Knopf dreht sich ein Kreis.
     @State private var isManualRefresh = false
     @Environment(\.openRoute) private var openRoute
 
@@ -47,16 +47,18 @@ struct FundstellenView: View {
         .navigationTitle(route.label)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                VStack(spacing: 0) {
-                    Text(route.label).font(.headline).lineLimit(1)
-                    let subtitle = subtitle(content)
-                    if !subtitle.isEmpty {
-                        Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            if !Self.titleInWindowBar {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 0) {
+                        Text(route.label).font(.headline).lineLimit(1)
+                        let subtitle = subtitle(content)
+                        if !subtitle.isEmpty {
+                            Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
                     }
+                    .opacity(!model.hasLoaded || !headerVisible ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.15), value: headerVisible)
                 }
-                .opacity(!model.hasLoaded || !headerVisible ? 1 : 0)
-                .animation(.easeInOut(duration: 0.15), value: headerVisible)
             }
             if let bookId = route.bookId {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -64,28 +66,35 @@ struct FundstellenView: View {
                 }
             }
             #if targetEnvironment(macCatalyst)
-            // Ziehen zum Aktualisieren gibt es auf dem Mac nicht
+            // Ziehen zum Aktualisieren gibt es auf dem Mac nicht. ⌘R steht im Menü „Darstellung“.
             ToolbarItem(placement: .topBarTrailing) {
-                if isManualRefresh {
-                    ProgressView().controlSize(.small).accessibilityLabel("Wird aktualisiert")
-                } else {
-                    Button("Aktualisieren", systemImage: "arrow.clockwise") {
-                        Task {
-                            isManualRefresh = true
-                            await model.refresh()
-                            isManualRefresh = false
-                        }
-                    }
-                    .keyboardShortcut("r")
-                }
+                ToolbarIconButton("Aktualisieren", systemImage: "arrow.clockwise", isBusy: isManualRefresh, action: manualRefresh)
             }
             #endif
         }
+        .focusedSceneValue(\.pageCommands, PageCommands(
+            refresh: manualRefresh,
+            bookOwned: route.bookId == nil ? nil : model.routeBookOwned,
+            toggleBookOwned: route.bookId.map { bookId in { model.setOwned(bookId, owned: !model.routeBookOwned) } },
+            showCover: route.isBook ? { showCover = true } : nil
+        ))
         .modifier(BookSearch(enabled: route.isBook, text: Bindable(model).bookFilter))
         .fullScreenCover(isPresented: $showCover) {
             CoverViewer(url: model.book?.coverUrl ?? content.books.first?.coverUrl, title: model.book?.title ?? route.label)
         }
         .task { await model.observe() }
+    }
+
+    /// Mac: Catalyst zeigt `.principal` nicht, dafür den Titel immer in der Fensterleiste, nicht erst
+    /// nach dem Wegscrollen der Überschrift. Die Liste zeigt dann nur die Unterzeile.
+    private static let titleInWindowBar = UIDevice.current.userInterfaceIdiom == .mac
+
+    private func manualRefresh() {
+        Task {
+            isManualRefresh = true
+            await model.refresh()
+            isManualRefresh = false
+        }
     }
 
     private func list(_ content: FundstellenContent) -> some View {
@@ -99,7 +108,9 @@ struct FundstellenView: View {
                                    countLabel: countLabel(content)) { showCover = true }
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(route.label).font(.title2.weight(.semibold))
+                            if !Self.titleInWindowBar {
+                                Text(route.label).font(.title2.weight(.semibold))
+                            }
                             Text(subtitle(content)).font(.subheadline).foregroundStyle(.secondary)
                         }
                     }
@@ -117,9 +128,8 @@ struct FundstellenView: View {
                         .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 8, trailing: 4))
                 }
                 if model.refreshFailed {
-                    Label("Aktualisierung fehlgeschlagen, angezeigt wird der gespeicherte Stand.", systemImage: "exclamationmark.triangle")
+                    WarningLabel("Aktualisierung fehlgeschlagen, angezeigt wird der gespeicherte Stand.")
                         .font(.subheadline)
-                        .foregroundStyle(.red)
                 }
                 let showOwnedChip = content.ownedBookCount > 0 && !route.isBook
                 let showSortChip = route.isBook && content.unfilteredCount > 1
@@ -135,7 +145,8 @@ struct FundstellenView: View {
                         onSelectScoring: model.selectScoring
                     )
                     .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                    // Die Chips bringen 44 pt Trefferfläche mit, daher ohne eigenen Abstand
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                 }
             }
             .listRowSeparator(.hidden)
@@ -150,12 +161,15 @@ struct FundstellenView: View {
             ForEach(content.books) { book in
                 Section {
                     if !route.isBook {
-                        NavigationLink(value: Route.fundstellen(FundstellenRoute(
+                        let bookRoute = Route.fundstellen(FundstellenRoute(
                             query: .byBook(book.bookId), label: book.bookTitle, detail: book.bookSubtitle
-                        ))) {
+                        ))
+                        NavigationLink(value: bookRoute) {
                             BookRow(book: book) { model.setOwned(book.bookId, owned: !book.isOwned) }
                                 .macRowPadding()
                         }
+                        .bookContextMenu(isOwned: book.isOwned, open: { openRoute(bookRoute) },
+                                         toggleOwned: { model.setOwned(book.bookId, owned: !book.isOwned) })
                     }
                     ForEach(Array(book.entries.enumerated()), id: \.offset) { _, entry in
                         FundstelleRow(fundstelle: entry, routeLabel: route.label, composerLinks: model.composerLinks)
@@ -232,14 +246,30 @@ private struct FilterChips: View {
     let onSelectScoring: (String) -> Void
 
     var body: some View {
+        #if targetEnvironment(macCatalyst)
+        // Auf dem Mac ohne seitliches Scrollen: Mit einer Maus ohne Seitenrad blieben die Chips
+        // rechts außerhalb des Fensters unerreichbar. Die Besetzungen schließen sich gegenseitig aus,
+        // dafür ist auf dem Mac ein Aufklappmenü üblich.
+        HStack(spacing: 8) {
+            ownChips
+            if scoringOptions.count > 1 {
+                Picker("Besetzung", selection: scoringSelection) {
+                    Text("Alle Besetzungen").tag(String?.none)
+                    ForEach(scoringOptions, id: \.self) { Text($0).tag(Optional($0)) }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+            Spacer(minLength: 0)
+        }
+        // Bündig mit Cover, Unterzeile und Hinweis darüber (Einzug 4 wie dort). Die 20 pt unten gelten
+        // für die scrollende Reihe, die bis an den Rand laufen soll.
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
+        #else
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                if showSort {
-                    Chip(label: "Titel A–Z", systemImage: nil, selected: sortByTitle) { sortByTitle.toggle() }
-                }
-                if showOwned {
-                    Chip(label: "Inventar (\(ownedCount))", systemImage: "bookmark.fill", selected: onlyOwned) { onlyOwned.toggle() }
-                }
+                ownChips
                 if scoringOptions.count > 1 {
                     ForEach(scoringOptions, id: \.self) { scoring in
                         Chip(label: scoring, systemImage: nil, selected: scoring == selectedScoring) { onSelectScoring(scoring) }
@@ -247,6 +277,30 @@ private struct FilterChips: View {
                 }
             }
             .padding(.horizontal, 20)
+        }
+        #endif
+    }
+
+    @ViewBuilder
+    private var ownChips: some View {
+        if showSort {
+            Chip(label: "Titel A–Z", systemImage: nil, selected: sortByTitle) { sortByTitle.toggle() }
+        }
+        if showOwned {
+            Chip(label: "Inventar (\(ownedCount))", systemImage: "bookmark.fill", selected: onlyOwned) { onlyOwned.toggle() }
+        }
+    }
+
+    /// `onSelectScoring` schaltet um: dieselbe Besetzung noch einmal hebt die Auswahl auf.
+    private var scoringSelection: Binding<String?> {
+        Binding {
+            selectedScoring
+        } set: { scoring in
+            if let scoring, scoring != selectedScoring {
+                onSelectScoring(scoring)
+            } else if scoring == nil, let current = selectedScoring {
+                onSelectScoring(current)
+            }
         }
     }
 }
@@ -298,10 +352,12 @@ private struct FundstelleRow: View {
                         .tint(Color.brand)
                         .linkPointer(names.contains { $0.1 != nil })
                 }
-                let tags = [fundstelle.scoring, fundstelle.keySignature.map(keySignatureLabel)].compactMap { $0 }
-                if !tags.isEmpty {
+                if fundstelle.scoring != nil || fundstelle.keySignature != nil {
                     HStack(spacing: 6) {
-                        ForEach(tags, id: \.self) { Tag(text: $0) }
+                        if let scoring = fundstelle.scoring { Tag(text: scoring) }
+                        if let key = fundstelle.keySignature {
+                            Tag(text: keySignatureLabel(key)).accessibilityLabel(keySignatureSpoken(key))
+                        }
                     }
                     .padding(.top, 2)
                 }
@@ -355,6 +411,14 @@ private func keySignatureLabel(_ raw: String) -> String {
     if raw.hasSuffix("b") { return raw.dropLast() + " ♭" }
     if raw.hasSuffix("#") { return raw.dropLast() + " ♯" }
     return raw
+}
+
+/// Zum Vorlesen, wie Bläser es sagen: "1b" → "1 Be", "2#" → "2 Kreuze". „♭“ und „♯“ liest
+/// VoiceOver nicht als Vorzeichen vor.
+private func keySignatureSpoken(_ raw: String) -> String {
+    if raw.hasSuffix("b") { return raw.dropLast() + " Be" }
+    if raw.hasSuffix("#") { return raw.dropLast() + (raw.dropLast() == "1" ? " Kreuz" : " Kreuze") }
+    return keySignatureLabel(raw)
 }
 
 private struct BookHeader: View {
