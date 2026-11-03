@@ -424,6 +424,16 @@ var deviceName: String {
     }
 }
 
+extension BookItem {
+    /// Untertitel, Jahr und Verlag für die Buchzeile im Inventar und in der Einführung.
+    var details: String {
+        // Bei Jahresheften ist der Untertitel oft nur das Jahr
+        var seen = Set<String>()
+        return [subtitle, year.map(String.init), publisher]
+            .compactMap { $0 }.filter { seen.insert($0).inserted }.joined(separator: " · ")
+    }
+}
+
 /// "1 Buch", "12 Bücher"
 func booksLabel(_ count: Int) -> String { count == 1 ? "1 Buch" : "\(count) Bücher" }
 

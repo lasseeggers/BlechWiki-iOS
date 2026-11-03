@@ -96,12 +96,14 @@ public final class SettingsRepository: Sendable {
         self.preferences = preferences
     }
 
-    /// EG-Anhänge der Landeskirchen, ohne Stammteil und Ergänzungen, deutsch sortiert.
+    /// EG-Anhänge der Landeskirchen, ohne Stammteil und Ergänzungen, deutsch sortiert. Vor dem ersten
+    /// Abgleich die eingebaute Liste, damit die Einführung auch ohne Netz eine Auswahl zeigt.
     public func egAppendices() throws -> [EgAppendix] {
         let german = Locale(identifier: "de_DE")
-        return try db.egAppendices()
+        let stored = try db.egAppendices().map { EgAppendix(code: $0.code, name: $0.name) }
+        let list = stored.isEmpty ? JsonBlechWikiAPI.egAppendices.map { EgAppendix(code: $0.code, name: $0.name) } : stored
+        return list
             .filter { $0.code != SearchIndexBuilder.stammteil && $0.code != SearchIndexBuilder.ergaenzungen }
-            .map { EgAppendix(code: $0.code, name: $0.name) }
             // SQLite sortiert "Österreich" sonst hinter "Württemberg"
             .sorted { $0.name.compare($1.name, locale: german) == .orderedAscending }
     }
@@ -123,4 +125,20 @@ public final class SettingsRepository: Sendable {
 
     /// `true`, sobald einmal alle Stammdaten lokal vorliegen.
     public func hasData() throws -> Bool { try db.syncState()?.isComplete == true }
+
+    /// Ob die Einführung beim Start erscheinen soll. Wer schon eine Landeskirche oder Bücher eingetragen
+    /// hat, kennt die App schon und bekommt sie nicht zu sehen. Einmal beim Start
+    /// abfragen: Während der Einführung wählt der Nutzer selbst eine Landeskirche.
+    public func needsOnboarding() -> Bool {
+        if preferences.onboardingDone { return false }
+        if preferences.egAppendix != nil || !preferences.ownedBookIds.isEmpty {
+            preferences.setOnboardingDone()
+            return false
+        }
+        return true
+    }
+
+    public func finishOnboarding() {
+        preferences.setOnboardingDone()
+    }
 }

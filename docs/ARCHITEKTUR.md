@@ -32,7 +32,7 @@ Zählerstand am 01.11.2026: Titel 69, Buch 122, Komponist 78.
 
 ### Fundstellen (wo steht ein Stück?)
 
-In der App heißt die Ansicht dazu „Suchergebnisse“. Im Code und in dieser Doku bleibt „Fundstelle“ der Begriff für eine Zeile aus diesen Endpunkten.
+In der App und im Code heißt die Ansicht dazu „Suchergebnisse“ (iOS `SuchergebnisseView`, Android `SuchergebnisseScreen`). „Fundstelle“ bleibt der Begriff für eine Zeile aus diesen Endpunkten, auch in Datenbank, API und Repository.
 
 | Endpunkt | Schlüssel | Beispiel |
 |---|---|---|
@@ -63,7 +63,7 @@ Kernidee: **Tippen kostet keine Anfrage.** Alle Stammdaten (Titel, EG, Bücher, 
 
 ### Stufe 1: Initial-Sync (einmalig, 4 Requests, ~2,1 MB)
 
-`Version?…&counter=0` für Titel, Bücher und Komponisten, dazu `EG` → Room bzw. SQLite. Läuft beim ersten Start mit Fortschrittsanzeige. Danach holt die App nur noch Änderungen, siehe [Aktualisierung](#aktualisierung).
+`Version?…&counter=0` für Titel, Bücher und Komponisten, dazu `EG` → Room bzw. SQLite. Läuft beim ersten Start im Hintergrund, während die Einführung zu sehen ist (iOS `OnboardingView`, Android `OnboardingScreen`). Nach der Tour folgen zwei Schritte der Einrichtung. Der letzte schlägt Bücher fürs Inventar vor und braucht dafür die Bücher-Tabelle. Bis dahin zeigt sie den Ladestand. Die Auswahl der Landeskirche davor nimmt ohne Daten die eingebaute Liste der EG-Anhänge. Ob die Einführung erscheint, entscheidet die App einmal beim Start (`needsOnboarding`): nicht, wenn sie schon durchlaufen wurde oder schon eine Landeskirche oder Bücher eingetragen sind. Danach holt die App nur noch Änderungen, siehe [Aktualisierung](#aktualisierung).
 
 ### Stufe 2: Lokale Suche
 

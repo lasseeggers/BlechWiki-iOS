@@ -46,15 +46,17 @@ final class MyBooksModel {
     }
 
     private let container: AppContainer
+    @ObservationIgnored private var observation: ChangeObservation?
 
     init(container: AppContainer) {
         self.container = container
+        observation = ChangeObservation(container.changes) { [weak self] in self?.reload() }
         reload()
     }
 
+    /// Liest beim Erscheinen neu. Änderungen danach kommen über `observation`.
     func observe() async {
         reload()
-        for await _ in container.changes.stream() { reload() }
     }
 
     func toggle(_ book: BookItem) {

@@ -12,11 +12,12 @@ Screenshots: links Android (Galaxy S8, Android 9), rechts iOS (Simulator iPhone 
 |:---:|:---:|
 | <img src="screenshots/android-startseite.png" width="260" alt="Startseite Android"> | <img src="screenshots/ios-startseite.png" width="260" alt="Startseite iOS"> |
 
-- Beim ersten Start lädt die App das Liederverzeichnis (einmalig etwa 2 MB). Danach läuft die Suche ohne Internet.
+- Beim ersten Start erklärt eine Tour auf vier Seiten Suche, Suchergebnisse, Inventar und Gesangbuch, jeweils mit Screenshot. Wischen oder „Weiter“ blättert, „Überspringen“ oder „Einrichten“ öffnet die Einrichtung. Die sieht aus wie eine normale Seite der App, damit klar ist, dass hier etwas einzustellen ist: In Schritt 1 wählt man die Landeskirche, in Schritt 2 hakt man die ersten Hefte fürs Inventar an, aus den Vorschlägen für die Landeskirche und den Choralbüchern. Wer schon eine Landeskirche oder Bücher eingetragen hat, sieht die Einführung nicht. In den App-Informationen lässt sie sich unter „Einführung ansehen“ jederzeit wieder öffnen, mit „Schließen“ oben links.
+- Währenddessen lädt die App im Hintergrund das Liederverzeichnis (einmalig etwa 2 MB) und danach den Inhalt der angehakten Hefte. Danach läuft die Suche ohne Internet. Ist das Verzeichnis bei der Bücherauswahl noch nicht da, zeigt die Seite den Ladestand. Die Landeskirche lässt sich auch ohne Netz wählen, dafür hat die App eine eingebaute Liste.
 - **Inventar** zeigt, wie viele Bücher eingetragen sind und ob ihr Inhalt schon offline vorliegt.
 - **Gesangbuch** öffnet alle EG-Lieder nach Anlass, siehe unten.
 - **Landeskirche** legt fest, welche Nummern aus den EG-Anhängen erscheinen und welche Hefte im Inventar vorgeschlagen werden.
-- **App-Informationen** erklärt, wie die App ihre Daten aktualisiert, und zeigt das Datum der letzten Prüfung, die Versionsnummer sowie Links zu Impressum und Datenschutzerklärung. Die App fragt höchstens einmal am Tag nach neuen und korrigierten Büchern, Liedern und Komponisten und lädt nur, was sich geändert hat. Einmal im Monat lädt sie im WLAN zur Sicherheit alles neu.
+- **App-Informationen** öffnet die Einführung erneut, erklärt, wie die App ihre Daten aktualisiert, und zeigt das Datum der letzten Prüfung, die Versionsnummer sowie Links zu Impressum und Datenschutzerklärung. Die App fragt höchstens einmal am Tag nach neuen und korrigierten Büchern, Liedern und Komponisten und lädt nur, was sich geändert hat. Einmal im Monat lädt sie im WLAN zur Sicherheit alles neu.
 
 ## Suche
 

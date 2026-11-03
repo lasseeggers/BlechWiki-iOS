@@ -52,7 +52,7 @@ struct HymnalView: View {
 
     private func songs(_ section: HymnalSection) -> some View {
         ForEach(section.songs) { song in
-            NavigationLink(value: Route.fundstellen(FundstellenRoute(
+            NavigationLink(value: Route.suchergebnisse(SuchergebnisseRoute(
                 query: .byEgMelody(song.ixUr), label: song.title, detail: "EG \(song.number)"
             ))) {
                 SongRow(song: song)

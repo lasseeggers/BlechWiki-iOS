@@ -17,15 +17,17 @@ final class HymnalModel {
     /// Nach einem Sprung über das Menü bleibt der gewählte Anlass kurz fest. Sonst gewänne der Anlass
     /// davor, dessen letzte Lieder nach dem Sprung noch unter der Toolbar liegen.
     @ObservationIgnored private var jumpedAt: Date?
+    @ObservationIgnored private var observation: ChangeObservation?
 
     init(container: AppContainer) {
         self.container = container
+        // Liest neu, sobald sich Verzeichnis oder Landeskirche ändern
+        observation = ChangeObservation(container.changes) { [weak self] in self?.reload() }
     }
 
-    /// Liest neu, sobald sich Verzeichnis oder Landeskirche ändern.
+    /// Liest beim Erscheinen. Änderungen danach kommen über `observation`.
     func observe() async {
         reload()
-        for await _ in container.changes.stream() { reload() }
     }
 
     func songAppeared(in occasion: String) {

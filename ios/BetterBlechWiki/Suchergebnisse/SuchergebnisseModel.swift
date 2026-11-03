@@ -3,7 +3,7 @@ import Foundation
 import Observation
 
 extension ComposerLink {
-    /// Link im Fließtext. `FundstellenView` fängt ihn per `openURL` ab und öffnet die Komponistensuche.
+    /// Link im Fließtext. `SuchergebnisseView` fängt ihn per `openURL` ab und öffnet die Komponistensuche.
     var url: URL {
         var components = URLComponents()
         components.scheme = "komponist"
@@ -23,7 +23,7 @@ struct BookGroup: Identifiable {
 }
 
 /// Abgeleiteter Zustand nach allen Filtern.
-struct FundstellenContent {
+struct SuchergebnisseContent {
     /// Bücher im Inventar zuerst, sonst in API-Reihenfolge.
     var books: [BookGroup] = []
     /// Einträge nach allen Filtern.
@@ -38,9 +38,9 @@ struct FundstellenContent {
 
 @MainActor
 @Observable
-final class FundstellenModel {
+final class SuchergebnisseModel {
 
-    let route: FundstellenRoute
+    let route: SuchergebnisseRoute
     var bookFilter: String
     var selectedScoring: String?
     var onlyOwned = false
@@ -64,11 +64,13 @@ final class FundstellenModel {
     private var entries: [(fundstelle: Fundstelle, words: [String])] = []
 
     private let container: AppContainer
+    @ObservationIgnored private var observation: ChangeObservation?
 
-    init(container: AppContainer, route: FundstellenRoute) {
+    init(container: AppContainer, route: SuchergebnisseRoute) {
         self.container = container
         self.route = route
         bookFilter = route.initialFilter ?? ""
+        observation = ChangeObservation(container.changes) { [weak self] in self?.reload() }
         reload()
     }
 
@@ -79,7 +81,7 @@ final class FundstellenModel {
 
     var isBookFiltered: Bool { !TextFilter(bookFilter).isEmpty }
 
-    var content: FundstellenContent {
+    var content: SuchergebnisseContent {
         let textFilter = TextFilter(bookFilter)
         let filtered = entries
             .filter { selectedScoring == nil || $0.fundstelle.scoring == selectedScoring }
@@ -96,7 +98,7 @@ final class FundstellenModel {
         }
         let scoringCounts = groupedInOrder(entries.compactMap(\.fundstelle.scoring), by: { $0 })
         var seenBooks = Set<String>()
-        return FundstellenContent(
+        return SuchergebnisseContent(
             books: groups.filter(\.isOwned) + groups.filter { !$0.isOwned },
             totalCount: filtered.count,
             unfilteredCount: entries.count,
@@ -110,9 +112,7 @@ final class FundstellenModel {
     /// Zeigt sofort den Cache und lädt nach, wenn nichts da oder der Eintrag veraltet ist.
     func observe() async {
         reload()
-        let initialRefresh = Task { await refresh(force: false) }
-        for await _ in container.changes.stream() { reload() }
-        initialRefresh.cancel()
+        await refresh(force: false)
     }
 
     /// `force` = false lädt nur, wenn nichts im Cache liegt oder er veraltet ist.

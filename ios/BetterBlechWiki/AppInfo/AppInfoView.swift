@@ -4,14 +4,31 @@ import SwiftUI
 /// Aktualisierung, Impressum, Datenschutz und Version. Erreichbar über die Startseite.
 struct AppInfoView: View {
     let container: AppContainer
-    @State private var lastCheckedAt: Date?
+    @State private var box = ModelBox<AppInfoModel>()
+    @State private var showOnboarding = false
 
     // Liegen im öffentlichen Repo, damit sie ohne eigene Website erreichbar sind
     static let impressumURL = URL(string: "https://github.com/lasseeggers/BlechWiki-iOS/blob/main/docs/IMPRESSUM.md")!
     static let privacyURL = URL(string: "https://github.com/lasseeggers/BlechWiki-iOS/blob/main/docs/DATENSCHUTZ.md")!
 
     var body: some View {
+        let model = box { AppInfoModel(container: container) }
         List {
+            Section {
+                Button { showOnboarding = true } label: {
+                    HStack {
+                        Text("Einführung ansehen").foregroundStyle(Color.primary)
+                        Spacer()
+                        Image(systemName: "chevron.right").foregroundStyle(.secondary).imageScale(.small)
+                    }
+                    .contentShape(Rectangle())
+                }
+            } header: {
+                header("Hilfe")
+            } footer: {
+                Text("Erklärt Suche, Suchergebnisse, Inventar und Gesangbuch. Am Ende lassen sich Landeskirche und Bücher fürs Inventar wählen.")
+            }
+
             // Beantwortet die naheliegende Frage, ob "Offline" heißt, dass nichts mehr nachkommt
             Section {
                 Text("Die Daten kommen von blechwiki.de. Beim Öffnen fragt die App höchstens einmal am Tag nach neuen und korrigierten Büchern, Liedern und Komponisten. Geladen wird nur, was sich geändert hat, einmal im Monat im WLAN zur Sicherheit alles. Ohne Internet bleibt der letzte Stand nutzbar.")
@@ -19,7 +36,7 @@ struct AppInfoView: View {
                     .foregroundStyle(.secondary)
                     // Mehrzeilig klebte der Text auf dem Mac an Kartenrand und Trennlinie
                     .macRowPadding(12)
-                LabeledContent("Zuletzt geprüft", value: lastCheckedAt?.formatted(standFormat) ?? "noch nie")
+                LabeledContent("Zuletzt geprüft", value: model.lastCheckedAt?.formatted(standFormat) ?? "noch nie")
             } header: {
                 header("Aktualisierung")
             }
@@ -37,14 +54,11 @@ struct AppInfoView: View {
         }
         .listSectionSpacing(.compact)
         .readableWidth()
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingView(container: container, onClose: { showOnboarding = false }) { showOnboarding = false }
+        }
         .navigationTitle("App-Informationen")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            lastCheckedAt = try? container.settings.lastCheckedAt()
-            for await _ in container.changes.stream() {
-                lastCheckedAt = try? container.settings.lastCheckedAt()
-            }
-        }
     }
 
     /// "0.6.1 (Build 48)"

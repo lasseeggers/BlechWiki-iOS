@@ -74,7 +74,7 @@ private struct ResultList: View {
         if !items.isEmpty {
             Section {
                 ForEach(items, id: \.self) { result in
-                    NavigationLink(value: Route.fundstellen(FundstellenRoute(result))) {
+                    NavigationLink(value: Route.suchergebnisse(SuchergebnisseRoute(result))) {
                         // Abstand wie auf der Startseite, sonst klebt die Markierung am Text
                         ResultRow(result: result, detailAsOverline: detailAsOverline).macRowPadding(5)
                     }
@@ -236,7 +236,7 @@ private struct StartView: View {
         NavigationLink(value: Route.appInfo) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("App-Informationen")
-                Text("Aktualisierung, Version, Impressum und Datenschutz")
+                Text("Einführung, Aktualisierung, Version, Impressum und Datenschutz")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

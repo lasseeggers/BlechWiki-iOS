@@ -148,13 +148,6 @@ struct MyBooksView: View {
         return "\(booksLabel(offline.owned)) · alle offline verfügbar"
     }
 
-    private func details(_ book: BookItem) -> String {
-        // Bei Jahresheften ist der Untertitel oft nur das Jahr
-        var seen = Set<String>()
-        return [book.subtitle, book.year.map(String.init), book.publisher]
-            .compactMap { $0 }.filter { seen.insert($0).inserted }.joined(separator: " · ")
-    }
-
     /// Mac: Überschrift als normale Zeile statt als Abschnittskopf. Abschnittsköpfe bleiben beim Scrollen
     /// oben stehen, und unter Catalyst blieb ihr heller Hintergrund nach dem Zurückscrollen über dem
     /// Listenanfang liegen.
@@ -179,7 +172,7 @@ struct MyBooksView: View {
     /// Tipp auf das Buch öffnet seinen Inhalt, Tipp auf den Kreis nimmt es ins Inventar auf oder entfernt es.
     private func books(_ books: [BookItem]) -> some View {
         ForEach(books) { book in
-            let route = Route.fundstellen(FundstellenRoute(query: .byBook(book.id), label: book.title, detail: book.subtitle))
+            let route = Route.suchergebnisse(SuchergebnisseRoute(query: .byBook(book.id), label: book.title, detail: book.subtitle))
             NavigationLink(value: route) {
                 HStack(spacing: 12) {
                     Button { model.toggle(book) } label: {
@@ -194,9 +187,8 @@ struct MyBooksView: View {
                     BookCover(url: book.coverUrl, width: 36)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(book.title).lineLimit(2)
-                        let details = details(book)
-                        if !details.isEmpty {
-                            Text(details).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                        if !book.details.isEmpty {
+                            Text(book.details).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
                         }
                     }
                 }

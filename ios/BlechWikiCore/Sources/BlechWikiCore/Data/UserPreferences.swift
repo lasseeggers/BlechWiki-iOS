@@ -18,6 +18,13 @@ public final class UserPreferences: @unchecked Sendable {
 
     public var ownedBookIds: Set<String> { Set(defaults.stringArray(forKey: Keys.ownedBooks) ?? []) }
 
+    /// Die Einführung beim ersten Start ist durchlaufen oder übersprungen.
+    public var onboardingDone: Bool { defaults.bool(forKey: Keys.onboardingDone) }
+
+    public func setOnboardingDone() {
+        defaults.set(true, forKey: Keys.onboardingDone)
+    }
+
     public func setEgAppendix(_ code: String?) {
         defaults.set(code, forKey: Keys.egAppendix)
         changes.notify()
@@ -51,5 +58,6 @@ public final class UserPreferences: @unchecked Sendable {
         // Bis 0.6.1 standen unter "owned_books" die Kurznamen der SOAP-API. Neuer Schlüssel
         // statt Migration, vor 1.0 durfte das Inventar verloren gehen.
         static let ownedBooks = "owned_book_ids"
+        static let onboardingDone = "onboarding_done"
     }
 }

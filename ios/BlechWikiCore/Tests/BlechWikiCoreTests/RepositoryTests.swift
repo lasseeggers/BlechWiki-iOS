@@ -213,6 +213,36 @@ struct RepositoryTests {
         #expect(try c.settings.egAppendices().map(\.name) == ["Österreich", "Württemberg"])
     }
 
+    @Test func vorDemErstenAbgleichDieEingebauteListeDerLandeskirchen() throws {
+        let c = try AppContainer(api: api, databaseURL: nil, defaults: defaults)
+        let appendices = try c.settings.egAppendices()
+        #expect(appendices.count == 13)
+        #expect(appendices.first?.name == "Baden/Elsaß/Lothringen")
+        #expect(appendices.last?.name == "Württemberg")
+        c.settings.selectEgAppendix("N")
+        #expect(try c.settings.selectedEgAppendix()?.name == "Nordelbien")
+    }
+
+    @Test func einfuehrungNurBeimErstenStart() throws {
+        let c = try AppContainer(api: api, databaseURL: nil, defaults: defaults)
+        #expect(c.settings.needsOnboarding())
+        // Landeskirche während der Einführung gewählt, App vor „Fertig“ beendet: beim nächsten Start nicht noch einmal
+        c.settings.selectEgAppendix("W")
+        #expect(!c.settings.needsOnboarding())
+
+        let fresh = UserDefaults(suiteName: "test-\(UUID().uuidString)")!
+        let d = try AppContainer(api: api, databaseURL: nil, defaults: fresh)
+        d.settings.finishOnboarding()
+        #expect(!d.settings.needsOnboarding())
+    }
+
+    @Test func werSchonBuecherHatSiehtDieEinfuehrungNicht() throws {
+        let c = try AppContainer(api: api, databaseURL: nil, defaults: defaults)
+        c.myBooks.setOwned("17", owned: true)
+        #expect(!c.settings.needsOnboarding())
+        #expect(c.preferences.onboardingDone)
+    }
+
     @Test func inventarCodeHinUndZurueck() async throws {
         let c = try await container()
         c.myBooks.setOwned("2271", owned: true)

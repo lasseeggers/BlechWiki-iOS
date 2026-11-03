@@ -27,6 +27,7 @@ final class SearchModel {
 
     private let container: AppContainer
     @ObservationIgnored private var searchTask: Task<Void, Never>?
+    @ObservationIgnored private var observation: ChangeObservation?
 
     /// `query`: Suchtext, der beim letzten Beenden im Feld stand.
     init(container: AppContainer, query: String = "") {
@@ -36,6 +37,7 @@ final class SearchModel {
         // Für Screenshots im Simulator: SIMCTL_CHILD_BBW_QUERY="lob herr" xcrun simctl launch …
         if let query = ProcessInfo.processInfo.environment["BBW_QUERY"] { self.query = query }
         #endif
+        observation = ChangeObservation(container.changes) { [weak self] in self?.reload() }
         reload()
     }
 
@@ -50,12 +52,9 @@ final class SearchModel {
         }
     }
 
-    /// Liest Startseite und Treffer neu, sobald sich Daten oder Einstellungen ändern.
+    /// Liest Startseite und Treffer beim Erscheinen neu. Änderungen danach kommen über `observation`.
     func observe() async {
         reload()
-        for await _ in container.changes.stream() {
-            reload()
-        }
     }
 
     func retrySync() {

@@ -53,7 +53,7 @@ struct BetterBlechWikiApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(container: container)
+            AppRoot(container: container)
                 .tint(.brand)
                 // Übernahme aus der Share Extension, während die App aktiv bleibt (iPad in Split View
                 // neben Nachrichten). Das Aktivieren unten bekommt sie dann nicht mit.
@@ -130,14 +130,21 @@ final class NetworkMonitor {
 enum Route: Hashable, Codable {
     case myBooks
     case egAppendix
-    case fundstellen(FundstellenRoute)
+    case suchergebnisse(SuchergebnisseRoute)
     /// Gesangbuch nach Anlass.
     case hymnal
     /// Aktualisierung, Impressum, Datenschutz, Version.
     case appInfo
+
+    // `suchergebnisse` hieß früher `fundstellen`. Der alte Schlüssel bleibt, damit `@SceneStorage`
+    // die zuletzt offene Ansicht nach einem Update wiederherstellt.
+    private enum CodingKeys: String, CodingKey {
+        case myBooks, egAppendix, hymnal, appInfo
+        case suchergebnisse = "fundstellen"
+    }
 }
 
-struct FundstellenRoute: Hashable, Codable {
+struct SuchergebnisseRoute: Hashable, Codable {
     var query: FundstellenQuery
     var label: String
     var detail: String?
@@ -204,6 +211,50 @@ struct FundstellenRoute: Hashable, Codable {
 
     var bookId: String? {
         if case .byBook(let id) = query { id } else { nil }
+    }
+}
+
+/// Beim ersten Start die Einführung, danach die App.
+struct AppRoot: View {
+    let container: AppContainer
+    /// Einmal beim Öffnen des Fensters entschieden. Während der Einführung wählt der Nutzer eine
+    /// Landeskirche, sie verschwände sonst mitten im Durchlauf.
+    @State private var onboarding: Bool
+
+    init(container: AppContainer) {
+        self.container = container
+        _onboarding = State(initialValue: Self.showOnboarding(container))
+    }
+
+    var body: some View {
+        if onboarding {
+            OnboardingView(container: container, page: Self.firstPage) {
+                withAnimation { onboarding = false }
+            }
+            .transition(.opacity)
+        } else {
+            RootView(container: container)
+        }
+    }
+
+    private static func showOnboarding(_ container: AppContainer) -> Bool {
+        #if DEBUG
+        // Für Screenshots und Tests: BBW_ONBOARDING zeigt die Einführung immer, der Wert ist die erste
+        // Seite (0 bis 5). Andere BBW_*-Parameter
+        // öffnen eine Seite der App, die Einführung stünde davor.
+        let env = ProcessInfo.processInfo.environment
+        if env["BBW_ONBOARDING"] != nil { return true }
+        if env.keys.contains(where: { $0.hasPrefix("BBW_") }) { return false }
+        #endif
+        return container.settings.needsOnboarding()
+    }
+
+    private static var firstPage: Int {
+        #if DEBUG
+        Int(ProcessInfo.processInfo.environment["BBW_ONBOARDING"] ?? "") ?? 0
+        #else
+        0
+        #endif
     }
 }
 
@@ -314,9 +365,9 @@ struct RootView: View {
             case ("hymnal", _): selection = .hymnal
             case ("appinfo", _): selection = .appInfo
             case ("eg", let key):
-                selection = .fundstellen(FundstellenRoute(query: .byEgMelody(Int(key) ?? 0), label: env["BBW_LABEL"] ?? "EG-Melodie \(key)", detail: detail))
-            case ("book", let key): selection = .fundstellen(FundstellenRoute(query: .byBook(key), label: env["BBW_LABEL"] ?? key, detail: detail))
-            case ("title", let key): selection = .fundstellen(FundstellenRoute(query: .byTitle(Int(key) ?? 0), label: env["BBW_LABEL"] ?? key, detail: detail))
+                selection = .suchergebnisse(SuchergebnisseRoute(query: .byEgMelody(Int(key) ?? 0), label: env["BBW_LABEL"] ?? "EG-Melodie \(key)", detail: detail))
+            case ("book", let key): selection = .suchergebnisse(SuchergebnisseRoute(query: .byBook(key), label: env["BBW_LABEL"] ?? key, detail: detail))
+            case ("title", let key): selection = .suchergebnisse(SuchergebnisseRoute(query: .byTitle(Int(key) ?? 0), label: env["BBW_LABEL"] ?? key, detail: detail))
             default: break
             }
         }
@@ -345,8 +396,8 @@ struct RootView: View {
             MyBooksView(container: container)
         case .egAppendix:
             EgAppendixSelectionView(settings: container.settings)
-        case .fundstellen(let route):
-            FundstellenView(container: container, route: route)
+        case .suchergebnisse(let route):
+            SuchergebnisseView(container: container, route: route)
         case .hymnal:
             HymnalView(container: container)
         case .appInfo:

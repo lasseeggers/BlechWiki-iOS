@@ -1,11 +1,11 @@
 import BlechWikiCore
 import SwiftUI
 
-struct FundstellenView: View {
+struct SuchergebnisseView: View {
 
     let container: AppContainer
-    let route: FundstellenRoute
-    @State private var box = ModelBox<FundstellenModel>()
+    let route: SuchergebnisseRoute
+    @State private var box = ModelBox<SuchergebnisseModel>()
     // Der volle Titel steht als Überschrift in der Liste. In der Leiste erscheint er, sobald
     // die Überschrift weggescrollt ist oder es noch keine Liste gibt.
     @State private var headerVisible = true
@@ -14,13 +14,13 @@ struct FundstellenView: View {
     @State private var isManualRefresh = false
     @Environment(\.openRoute) private var openRoute
 
-    init(container: AppContainer, route: FundstellenRoute) {
+    init(container: AppContainer, route: SuchergebnisseRoute) {
         self.container = container
         self.route = route
     }
 
-    private var model: FundstellenModel {
-        box { FundstellenModel(container: container, route: route) }
+    private var model: SuchergebnisseModel {
+        box { SuchergebnisseModel(container: container, route: route) }
     }
 
     var body: some View {
@@ -97,7 +97,7 @@ struct FundstellenView: View {
         }
     }
 
-    private func list(_ content: FundstellenContent) -> some View {
+    private func list(_ content: SuchergebnisseContent) -> some View {
         @Bindable var model = model
         return List {
             Section {
@@ -161,7 +161,7 @@ struct FundstellenView: View {
             ForEach(content.books) { book in
                 Section {
                     if !route.isBook {
-                        let bookRoute = Route.fundstellen(FundstellenRoute(
+                        let bookRoute = Route.suchergebnisse(SuchergebnisseRoute(
                             query: .byBook(book.bookId), label: book.bookTitle, detail: book.bookSubtitle
                         ))
                         NavigationLink(value: bookRoute) {
@@ -192,20 +192,20 @@ struct FundstellenView: View {
         // Komponisten-Links öffnen die Suchergebnisse des Komponisten wie ein Treffer in der Suche
         .environment(\.openURL, OpenURLAction { url in
             guard let link = model.composerLink(for: url) else { return .systemAction }
-            openRoute(.fundstellen(FundstellenRoute(query: .byComposer(link.id), label: link.name, detail: link.lifeDates)))
+            openRoute(.suchergebnisse(SuchergebnisseRoute(query: .byComposer(link.id), label: link.name, detail: link.lifeDates)))
             return .handled
         })
         .scrollDismissesKeyboard(.immediately)
         .refreshable { await model.refresh() }
     }
 
-    private func subtitle(_ content: FundstellenContent) -> String {
+    private func subtitle(_ content: SuchergebnisseContent) -> String {
         [route.detail, countLabel(content)].compactMap { $0 }.joined(separator: " · ")
     }
 
     /// Buchansicht: Einträge im Buch ("60 Stücke", gefiltert "3 von 60 Stücken").
     /// Sonst: Fundstellen des Lieds über alle Bücher.
-    private func countLabel(_ content: FundstellenContent) -> String? {
+    private func countLabel(_ content: SuchergebnisseContent) -> String? {
         guard model.hasLoaded else { return nil }
         if route.isBook {
             if content.totalCount != content.unfilteredCount {
@@ -393,7 +393,7 @@ private struct Tag: View {
 }
 
 /// Namen mit " / " getrennt. Namen mit Link in Markenfarbe, ein Tipp öffnet die Suchergebnisse
-/// des Komponisten (`openURL` in `FundstellenView`).
+/// des Komponisten (`openURL` in `SuchergebnisseView`).
 private func linkedNames(_ names: [(String, ComposerLink?)]) -> AttributedString {
     var text = AttributedString()
     for (index, (name, link)) in names.enumerated() {
@@ -422,7 +422,7 @@ private func keySignatureSpoken(_ raw: String) -> String {
 }
 
 private struct BookHeader: View {
-    let route: FundstellenRoute
+    let route: SuchergebnisseRoute
     let book: BookItem?
     let editorLink: ComposerLink?
     let coverUrl: String?

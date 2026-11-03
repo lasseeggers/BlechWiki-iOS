@@ -53,8 +53,9 @@ public final class JsonBlechWikiAPI: BlechWikiAPI {
     /// Cover gibt es als `mini60/`, `mini120/`, `mini240/` und im Original, siehe `CoverUrls`.
     private static let coverBaseURL = "https://teddymuetze.ddns.net/Bilder/BilderBuch/mini60/"
 
-    /// Rückfall für `getEgAppendices`, Stand `EG?anhaenge=true` vom 03.11.2026.
-    private static let egAppendices = [
+    /// Rückfall für `getEgAppendices`, Stand `EG?anhaenge=true` vom 03.11.2026. Auch für die Auswahl
+    /// der Landeskirche, solange das Verzeichnis noch nicht geladen ist.
+    public static let egAppendices = [
         EgAppendixDto(code: "Add", name: "Ergänzungen"),
         EgAppendixDto(code: "BEL", name: "Baden/Elsaß/Lothringen"),
         EgAppendixDto(code: "BT", name: "Bayern/Thüringen"),
