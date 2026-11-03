@@ -2,14 +2,20 @@ import CryptoKit
 import Foundation
 
 /// Kurzer Code für ein Inventar, zum Weitergeben per Messenger oder Mail, ohne Server.
-/// Muss Byte für Byte mit `InventoryCode.kt` der Android-App übereinstimmen.
+/// Muss Bit für Bit mit `InventoryCode.kt` der Android-App übereinstimmen.
 ///
-/// Format: `BBW-SCCC-XXXX-XXXX-…`
-/// - `S`: Startwert der Hashfunktion (0 bis 31). Der Absender nimmt den kleinsten, bei dem keines
-///   seiner Bücher mit einem anderen Buch im Verzeichnis denselben Hash hat.
-/// - `CCC`: Prüfsumme über alle Buch-IDs (15 Bit). Erkennt Tippfehler und löst beim Empfänger
-///   Kollisionen auf, die erst durch neue Bücher im Verzeichnis entstehen.
-/// - `XXXX`: je Buch die ersten 20 Bit von SHA-256 über Startwert und Buch-ID.
+/// Format: `BW2` und danach ein Bitstrom in Crockford-Base32, ohne Striche, damit ein Doppelklick
+/// den ganzen Code markiert.
+/// - 4 Bit `k`: Ordnung des Exp-Golomb-Codes. Der Absender nimmt die kleinste mit dem kürzesten Code.
+/// - 20 Bit Prüfsumme: die ersten 20 Bit von SHA-256 über die IDs, aufsteigend, mit Komma getrennt.
+/// - je Buch, aufsteigend, der Abstand zur vorigen ID minus 1 (beim ersten die ID selbst),
+///   Exp-Golomb der Ordnung `k`. Bei Reihen ist der Abstand 0 und kostet `k` + 1 Bit.
+/// - Nullen bis zum vollen Zeichen. Jedes Codewort enthält eine 1, Nullen am Ende sind kein Buch.
+///
+/// Der Code enthält die numerischen Buch-IDs (`buchId`) selbst. Der Empfänger braucht kein
+/// gleiches Verzeichnis, ein ihm unbekanntes Buch erscheint nach dem nächsten Abgleich.
+///
+/// Codes im alten Format `BBW-…` liest `LegacyInventoryCode`.
 ///
 /// Zeichen: Crockford-Base32 ohne I, L, O, U. Beim Lesen gelten O als 0 und I, L als 1.
 public enum InventoryCode {
@@ -23,200 +29,209 @@ public enum InventoryCode {
         case valid(bookIds: [String], unknownCount: Int)
     }
 
-    public static func encode(_ bookIds: [String], catalog: [String]) -> String {
-        precondition(!bookIds.isEmpty, "Leeres Inventar")
-        let ids = unique(bookIds)
-        let idSet = Set(ids.map(bytes))
-        let others = unique(catalog).filter { !idSet.contains(bytes($0)) }
-        let seed = (0..<seedCount).first { seed in
-            let own = ids.map { hash(seed, $0) }
-            let ownSet = Set(own)
-            return ownSet.count == own.count && !others.contains { ownSet.contains(hash(seed, $0)) }
-        } ?? 0
-        let header = (seed << checksumBits) | checksum(seed, ids)
-        let groups = [header] + ids.map { hash(seed, $0) }.sorted()
-        return prefix + groups.map { "-" + group($0) }.joined()
+    /// Code für die numerischen IDs in `bookIds`, andere zählen nicht. `nil`, wenn keine übrig bleibt.
+    public static func encode(_ bookIds: [String]) -> String? {
+        let ids = Array(Set(bookIds.compactMap(parseId))).sorted()
+        guard !ids.isEmpty else { return nil }
+        let gaps = ids.indices.map { ids[$0] - ($0 == 0 ? -1 : ids[$0 - 1]) - 1 }
+        func length(_ order: Int) -> Int { gaps.reduce(0) { $0 + expGolombLength($1, order) } }
+        // Die kleinste Ordnung mit dem kürzesten Code, wie `minBy` in Kotlin
+        var order = 0
+        for k in 1...maxOrder where length(k) < length(order) { order = k }
+        var bits = BitWriter()
+        bits.write(order, orderBits)
+        bits.write(checksum(ids), checksumBits)
+        for gap in gaps { bits.writeExpGolomb(gap, order) }
+        return prefix + bits.base32()
     }
 
-    /// Der Code in `text` (bei mehreren der wahrscheinlichste, siehe `candidates`), auch mitten in
-    /// einer weitergeleiteten Nachricht. Andere Striche, Zeilenumbrüche und Zitatzeichen zwischen den
-    /// Gruppen sind entfernt: "BBW–0RJT—\n> GA6Y" → "BBW-0RJT-GA6Y". Gruppen nur mit Leerraum davor
-    /// bleiben so getrennt.
+    /// Der Code in `text`, auch mitten in einer weitergeleiteten Nachricht, ohne Trennzeichen und
+    /// mit 0 und 1 statt O, I und L: "bw2-08ro8 fj…" → "BW208R08FJ…". Neue Codes vor alten.
     public static func find(_ text: String) -> String? {
-        candidates(in: text).first.map { groups in prefix + groups.map { ($0.dashed ? "-" : " ") + $0.text }.joined() }
+        let candidates = Self.candidates(in: text)
+        return candidates.first { $0.ids != nil }?.code
+            ?? LegacyInventoryCode.find(text)
+            ?? candidates.first?.code
     }
 
     public static func decode(_ text: String, catalog: [String]) -> Result {
-        // Steht vor dem Code noch Text wie "BBW Chor gibt", zählt der Code, der ganz aufgeht
-        var first: Result?
-        for groups in candidates(in: text) {
-            let result = decode(groups, catalog: catalog)
-            if case .valid(_, 0) = result { return result }
-            first = first ?? result
+        var damaged = false
+        for candidate in candidates(in: text) {
+            guard let ids = candidate.ids?.map(String.init) else {
+                damaged = true
+                continue
+            }
+            let known = Set(catalog)
+            let found = ids.filter(known.contains)
+            return .valid(bookIds: found, unknownCount: ids.count - found.count)
         }
-        return first ?? .notFound
+        let legacy = LegacyInventoryCode.decode(text, catalog: catalog)
+        return legacy == .notFound && damaged ? .invalid : legacy
     }
 
-    private static func decode(_ groups: [Group], catalog: [String]) -> Result {
-        // Ein Wort aus vier Zeichen hinter dem Code, nur durch Leerraum getrennt ("… GA6Y Euer Chor"),
-        // sieht aus wie eine weitere Gruppe. Solche Gruppen am Ende probeweise weglassen, höchstens
-        // `maxTrailingWords`, damit langer Text aus lauter solchen Wörtern nicht ewig dauert.
-        var count = groups.count
+    /// `ids`: `nil`, wenn der Code nicht aufgeht.
+    private struct Candidate {
+        var code: String
+        var ids: [Int]?
+    }
+
+    /// Codes im neuen Format in `text`, in der Reihenfolge im Text. Zwischen den Zeichen dürfen
+    /// Striche, Leerraum und Zitatzeichen stehen, falls jemand den Code aufteilt oder eine Mail ihn
+    /// umbricht. Wo der Code endet, entscheidet die Prüfsumme: Die Teile werden nacheinander
+    /// angehängt, bis sie aufgeht. Ein Wort dahinter ("… Euer Chor") bleibt so draußen.
+    private static func candidates(in text: String) -> [Candidate] {
+        // Einzelne Unicode-Zeichen statt Characters: "\r\n" wäre sonst eines, wie in Kotlin nicht
+        let upper = Array(text.uppercased().unicodeScalars)
+        let prefixScalars = Array(prefix.unicodeScalars)
+        var result: [Candidate] = []
+        var at = 0
+        while at + prefixScalars.count <= upper.count {
+            defer { at += 1 }
+            guard Array(upper[at..<at + prefixScalars.count]) == prefixScalars, at == 0 || !isCodeChar(upper[at - 1]) else { continue }
+            let start = at + prefixScalars.count
+            let parts = Self.parts(upper, start: start)
+            var chars: [Unicode.Scalar] = []
+            var ids: [Int]?
+            for part in parts {
+                if part.contains(where: { digit($0) == nil }) || chars.count + part.count > maxLength { break }
+                chars += part
+                ids = parse(chars)
+                if ids != nil { break }
+            }
+            if let ids {
+                result.append(Candidate(code: prefix + String(chars.map { alphabet[digit($0)!] }), ids: ids))
+            } else if let first = parts.first, isCodeChar(upper[start]) {
+                // Nur angehängte Zeichen gelten als beschädigter Code, sonst ist es Text wie "BW2 ist"
+                result.append(Candidate(code: prefix + String(String.UnicodeScalarView(first)), ids: nil))
+            }
+        }
+        return result
+    }
+
+    /// Folgen aus Buchstaben und Ziffern ab `start`, getrennt nur durch `separators`.
+    private static func parts(_ text: [Unicode.Scalar], start: Int) -> [[Unicode.Scalar]] {
+        var parts: [[Unicode.Scalar]] = []
+        var i = start
         while true {
-            let result = resolve(groups.prefix(count).map(\.text), catalog: catalog)
-            if case .valid(_, 0) = result { return result }
-            if count <= 2 || groups[count - 1].dashed || groups.count - count >= maxTrailingWords { break }
-            count -= 1
-        }
-        // Geht der Code nicht ganz auf, zählen nur die Gruppen bis zum letzten Strich. Ohne Striche
-        // lässt sich ein Code nicht sicher von Text unterscheiden.
-        let dashedCount = (groups.lastIndex(where: \.dashed) ?? -1) + 1
-        return dashedCount >= 2 ? resolve(groups.prefix(dashedCount).map(\.text), catalog: catalog) : .invalid
-    }
-
-    private static func resolve(_ groups: [String], catalog: [String]) -> Result {
-        var values: [Int] = []
-        for part in groups {
-            guard let value = parseGroup(part) else { return .invalid }
-            values.append(value)
-        }
-        if values.count < 2 { return .invalid }
-
-        let seed = values[0] >> checksumBits
-        let expectedChecksum = values[0] & ((1 << checksumBits) - 1)
-        var index: [Int: [String]] = [:]
-        for id in catalog { index[hash(seed, id), default: []].append(id) }
-        let candidates = unique(Array(values.dropFirst())).map { index[$0] ?? [] }
-        let unknown = candidates.filter(\.isEmpty).count
-
-        if unknown == 0 {
-            // Alle Hashes bekannt: Die Prüfsumme muss stimmen, sonst ist der Code beschädigt
-            guard let ids = combinations(candidates).first(where: { checksum(seed, unique($0)) == expectedChecksum }) else {
-                return .invalid
-            }
-            return .valid(bookIds: ids, unknownCount: 0)
-        }
-        // Mit fehlenden Büchern lässt sich die Prüfsumme nicht nachrechnen. Eindeutige übernehmen.
-        // Auch wenn keins bekannt ist: Es können lauter neue Bücher sein, die das Verzeichnis noch nicht hat.
-        let resolved = candidates.filter { $0.count == 1 }.map { $0[0] }
-        return .valid(bookIds: resolved, unknownCount: candidates.count - resolved.count)
-    }
-
-    static func hash(_ seed: Int, _ id: String) -> Int {
-        bits(sha256("\(seed):\(nfc(id))"), hashBits)
-    }
-
-    private static func checksum(_ seed: Int, _ ids: [String]) -> Int {
-        bits(sha256("\(seed)\n" + ids.map(nfc).sorted(by: utf16Less).joined(separator: "\n")), checksumBits)
-    }
-
-    private static func combinations(_ candidates: [[String]]) -> [[String]] {
-        // Mehrdeutige Hashes sind selten. Die Grenze verhindert eine Explosion bei vielen davon.
-        // Schrittweise prüfen: Das ganze Produkt liefe bei sehr vielen davon über.
-        var count = 1
-        for options in candidates {
-            count *= options.count
-            if count > maxCombinations { return [] }
-        }
-        return candidates.reduce([[]]) { acc, options in
-            acc.flatMap { prefix in options.map { prefix + [$0] } }
+            while i < text.count && separators.contains(text[i]) { i += 1 }
+            let end = text[i...].firstIndex { !isCodeChar($0) } ?? text.count
+            if end == i { return parts }
+            parts.append(Array(text[i..<end]))
+            i = end
         }
     }
 
-    private static func group(_ value: Int) -> String {
-        String((0..<groupLength).reversed().map { alphabet[(value >> ($0 * 5)) & 31] })
-    }
-
-    private struct Group {
-        var text: String
-        /// Vor der Gruppe steht ein Strich, nicht nur Leerraum.
-        var dashed: Bool
-    }
-
-    /// Mögliche Codes in `text`, der wahrscheinlichste zuerst: geschrieben wie von der App ("BBW-…"),
-    /// dann mit mehreren Gruppen, sonst in der Reihenfolge im Text. Eine einzelne Gruppe nur hinter
-    /// Leerraum ("BBW Chor") gilt nicht als Code.
-    private static func candidates(in text: String) -> [[Group]] {
-        let upper = text.uppercased()
-        let candidates = pattern.matches(in: upper, range: NSRange(upper.startIndex..., in: upper)).compactMap { match -> [Group]? in
-            guard let r = Range(match.range, in: upper) else { return nil }
-            var groups: [Group] = []
-            var current = String.UnicodeScalarView()
-            var dashed = false
-            for scalar in upper[r].unicodeScalars.dropFirst(prefix.count) {
-                if ("0"..."9").contains(scalar) || ("A"..."Z").contains(scalar) {
-                    current.append(scalar)
-                    if current.count == groupLength {
-                        groups.append(Group(text: String(current), dashed: dashed))
-                        current = String.UnicodeScalarView()
-                        dashed = false
-                    }
-                } else if dashes.contains(scalar) {
-                    dashed = true
-                }
-            }
-            return groups.count >= 2 || groups.first?.dashed == true ? groups : nil
+    /// IDs aus den Zeichen hinter `BW2`, `nil`, wenn der Code beschädigt ist.
+    private static func parse(_ chars: [Unicode.Scalar]) -> [Int]? {
+        var bits = BitReader(chars)
+        guard let order = bits.read(orderBits), let expected = bits.read(checksumBits) else { return nil }
+        var ids: [Int] = []
+        var previous = -1
+        while bits.hasOne() {
+            var zeros = 0
+            while !bits.next() { zeros += 1 }
+            guard zeros <= maxZeros, let rest = bits.read(zeros + order) else { return nil }
+            let gap = ((1 << (zeros + order)) | rest) - (1 << order)
+            previous += gap + 1
+            guard previous <= maxId else { return nil }
+            ids.append(previous)
         }
-        func rank(_ groups: [Group]) -> Int { groups.count < 2 ? 2 : groups[0].dashed ? 0 : 1 }
-        // Stabil sortiert wie `sortedBy` in Kotlin
-        return candidates.enumerated()
-            .sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }
-            .map(\.element)
+        return !ids.isEmpty && checksum(ids) == expected ? ids : nil
     }
 
-    private static func parseGroup(_ text: String) -> Int? {
-        guard text.count == groupLength else { return nil }
-        var value = 0
-        for c in text {
-            guard let digit = alphabet.firstIndex(of: readAliases[c] ?? c) else { return nil }
-            value = (value << 5) | digit
-        }
+    /// Nur Zahlen ohne führende Null, sonst käme beim Empfänger eine andere ID an.
+    private static func parseId(_ id: String) -> Int? {
+        let utf8 = Array(id.utf8)
+        guard (1...10).contains(utf8.count), utf8.allSatisfy({ (48...57).contains($0) }),
+              utf8.count == 1 || utf8[0] != 48, let value = Int(id), value <= maxId else { return nil }
         return value
     }
 
-    private static func bits(_ digest: SHA256.Digest, _ count: Int) -> Int {
-        let bytes = Array(digest.prefix(4))
-        let first = UInt32(bytes[0]) << 24 | UInt32(bytes[1]) << 16 | UInt32(bytes[2]) << 8 | UInt32(bytes[3])
-        return Int(first >> UInt32(32 - count))
+    private static func expGolombLength(_ value: Int, _ order: Int) -> Int {
+        let length = Int.bitWidth - (value + (1 << order)).leadingZeroBitCount
+        return 2 * length - 1 - order
     }
 
-    private static func sha256(_ text: String) -> SHA256.Digest { SHA256.hash(data: Data(text.utf8)) }
-
-    // Gleiche Bytes wie auf Android, egal wie Umlaute zusammengesetzt sind
-    private static func nfc(_ text: String) -> String { text.precomposedStringWithCanonicalMapping }
-
-    /// Duplikate entfernen, Reihenfolge des ersten Auftretens behalten.
-    private static func unique(_ items: [Int]) -> [Int] {
-        var seen = Set<Int>()
-        return items.filter { seen.insert($0).inserted }
+    private static func checksum(_ ids: [Int]) -> Int {
+        let hash = Array(SHA256.hash(data: Data(ids.map(String.init).joined(separator: ",").utf8)))
+        let first = Int(hash[0]) << 16 | Int(hash[1]) << 8 | Int(hash[2])
+        return first >> (24 - checksumBits)
     }
 
-    /// Wie `unique`, aber Byte für Byte wie `toSet()` in Kotlin. Swift hielte "ä" und "a" + Trema
-    /// für gleich, und beide Apps bauten verschiedene Codes.
-    private static func unique(_ items: [String]) -> [String] {
-        var seen = Set<[UInt8]>()
-        return items.filter { seen.insert(bytes($0)).inserted }
+    private static func isCodeChar(_ c: Unicode.Scalar) -> Bool { ("0"..."9").contains(c) || ("A"..."Z").contains(c) }
+
+    private static func digit(_ c: Unicode.Scalar) -> Int? {
+        let c = readAliases[c] ?? c
+        return alphabet.firstIndex(of: Character(c))
     }
 
-    private static func bytes(_ text: String) -> [UInt8] { Array(text.utf8) }
+    /// Bitstrom, höchstwertiges Bit zuerst.
+    private struct BitWriter {
+        private var bits: [Bool] = []
 
-    private static let prefix = "BBW"
+        mutating func write(_ value: Int, _ count: Int) {
+            for i in stride(from: count - 1, through: 0, by: -1) { bits.append((value >> i) & 1 == 1) }
+        }
+
+        mutating func writeExpGolomb(_ value: Int, _ order: Int) {
+            let shifted = value + (1 << order)
+            let length = Int.bitWidth - shifted.leadingZeroBitCount
+            write(0, length - 1 - order)
+            write(shifted, length)
+        }
+
+        func base32() -> String {
+            String(stride(from: 0, to: bits.count, by: 5).map { start in
+                let chunk = bits[start..<min(start + 5, bits.count)]
+                let value = chunk.reduce(0) { $0 << 1 | ($1 ? 1 : 0) }
+                return InventoryCode.alphabet[value << (5 - chunk.count)]
+            })
+        }
+    }
+
+    /// Liest die Bits aus gültigen Base32-Zeichen.
+    private struct BitReader {
+        private let bits: [Bool]
+        private var position = 0
+
+        init(_ chars: [Unicode.Scalar]) {
+            bits = chars.flatMap { c in
+                let value = InventoryCode.digit(c)!
+                return (0..<5).reversed().map { (value >> $0) & 1 == 1 }
+            }
+        }
+
+        func hasOne() -> Bool { bits[position...].contains(true) }
+
+        mutating func next() -> Bool {
+            defer { position += 1 }
+            return bits[position]
+        }
+
+        mutating func read(_ count: Int) -> Int? {
+            guard position + count <= bits.count else { return nil }
+            var value = 0
+            for _ in 0..<count { value = value << 1 | (next() ? 1 : 0) }
+            return value
+        }
+    }
+
+    private static let prefix = "BW2"
     private static let alphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
-    private static let readAliases: [Character: Character] = ["O": "0", "I": "1", "L": "1"]
-    private static let groupLength = 4
-    private static let hashBits = 20
-    private static let checksumBits = 15
-    private static let seedCount = 32
-    private static let maxCombinations = 256
-    private static let maxTrailingWords = 5
+    private static let readAliases: [Unicode.Scalar: Unicode.Scalar] = ["O": "0", "I": "1", "L": "1"]
+    private static let orderBits = 4
+    private static let maxOrder = 15
+    private static let checksumBits = 20
+    private static let maxId = Int(Int32.max)
+    // Mehr Nullen ergäben eine ID über maxId
+    private static let maxZeros = 32
+    // Alle 755 Bücher ergeben 220 Zeichen. Die Grenze hält langen Text hinter "BW2" kurz.
+    private static let maxLength = 2000
 
-    // Bindestrich, geschützter Bindestrich, Halbgeviert- und Geviertstrich (Autokorrektur), Minuszeichen
-    private static let dashes: Set<Unicode.Scalar> = ["-", "\u{2011}", "\u{2013}", "\u{2014}", "\u{2212}"]
-    // Leerraum als feste Liste (Unicode White_Space), weil \s in ICU und Java Verschiedenes meint
-    private static let space = #"\t-\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000"#
-    // Gruppen mit Strich und/oder Leerraum davor, danach auch Zeilenumbruch und Zitatzeichen
-    // umgebrochener Mails ("-\n> "), ohne angehängte Buchstaben. Gleich in InventoryCode.kt.
-    private static let pattern = try! NSRegularExpression(
-        pattern: #"BBW(?:(?:[\#(space)]*[\-\u2011\u2013\u2014\u2212]|[\#(space)])[\#(space)>]*[0-9A-Z]{4}(?![0-9A-Z]))+"#
-    )
+    // Bindestrich, geschützter Bindestrich, Halbgeviert- und Geviertstrich, Minuszeichen, Zitatzeichen
+    // umgebrochener Mails und Leerraum als feste Liste (Unicode White_Space). Gleich in InventoryCode.kt.
+    private static let separators: Set<Unicode.Scalar> = Set((
+        "-\u{2011}\u{2013}\u{2014}\u{2212}>\t\n\u{0B}\u{0C}\r \u{85}\u{A0}\u{1680}"
+            + "\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}"
+    ).unicodeScalars)
 }

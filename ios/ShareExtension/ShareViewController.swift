@@ -152,7 +152,7 @@ struct ShareImportView: View {
                 case .noCatalog:
                     Text("Öffne BlechWiki einmal, damit das Bücherverzeichnis geladen wird. Danach kannst du den Code hier übernehmen.")
                 case .result(.noCode):
-                    Text("In der geteilten Nachricht steht kein Inventar-Code. Er beginnt mit BBW-.")
+                    Text("In der geteilten Nachricht steht kein Inventar-Code. Er beginnt mit BW2 oder BBW.")
                 case .result(.invalid):
                     Text("Der Code ist unvollständig oder verändert. Bitte die Nachricht noch einmal teilen.")
                 case let .result(.ready(books, unknown)):

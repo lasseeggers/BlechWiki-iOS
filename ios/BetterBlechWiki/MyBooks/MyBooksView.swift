@@ -219,7 +219,7 @@ private struct ImportSheet: View {
                 Section {
                     // Auf dem Mac schreibt das Feld beim Schließen seinen Text noch einmal zurück. Ohne die
                     // Prüfung wäre importText danach wieder gesetzt und der Dialog ginge sofort neu auf
-                    TextField("BBW-…", text: Binding(get: { model.importText ?? "" }, set: { if model.importText != nil { model.importText = $0 } }), axis: .vertical)
+                    TextField("BW2…", text: Binding(get: { model.importText ?? "" }, set: { if model.importText != nil { model.importText = $0 } }), axis: .vertical)
                         .lineLimit(1...4)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.characters)
@@ -279,7 +279,7 @@ private struct ImportSheet: View {
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Text("Code oder ganze Nachricht einfügen")
         } else if model.importPreview == .noCode {
-            WarningLabel("Kein Code gefunden. Er beginnt mit BBW-.")
+            WarningLabel("Kein Code gefunden. Er beginnt mit BW2 oder BBW.")
         } else if model.importPreview == .invalid {
             WarningLabel("Code unvollständig oder verändert. Bitte neu kopieren.")
         }

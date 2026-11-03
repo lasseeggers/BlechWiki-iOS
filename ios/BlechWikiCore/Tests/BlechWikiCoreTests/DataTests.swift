@@ -4,26 +4,141 @@ import Testing
 
 struct InventoryCodeTests {
 
-    private let catalog = ["WBH2025", "BläshBay22", "101Bläserv", "30klChorRe", "ZGLE 84", "RomantischesSpielbuch"]
+    private let catalog = ["4", "23", "40", "41", "94", "187", "188", "189", "190", "191", "339", "340", "4035"]
 
-    private func roundTrip(_ ids: [String], sender: [String]? = nil, receiver: [String]? = nil) -> InventoryCode.Result {
-        InventoryCode.decode(InventoryCode.encode(ids, catalog: sender ?? catalog), catalog: receiver ?? catalog)
+    private func roundTrip(_ ids: [String], receiver: [String]? = nil) -> InventoryCode.Result {
+        InventoryCode.decode(InventoryCode.encode(ids)!, catalog: receiver ?? catalog)
+    }
+
+    /// Gültig und vollständig aufgelöst: die Bücher, sonst `nil`.
+    private func books(_ text: String) -> Set<String>? {
+        guard case let .valid(ids, 0) = InventoryCode.decode(text, catalog: catalog) else { return nil }
+        return Set(ids)
     }
 
     /// Codes aus der Kotlin-Implementierung (InventoryCode.kt). Weicht einer ab, können
     /// Android und iOS keine Inventare mehr austauschen.
     @Test func gleicheCodesWieAndroid() {
+        #expect(InventoryCode.encode(["4035"]) == "BW2SK2NFZGR")
+        #expect(InventoryCode.encode(["1", "3", "4", "5"]) == "BW20ZAPEJR")
+        #expect(InventoryCode.encode(catalog) == "BW23CHPARA150V0BTN04NG0770")
+        #expect(InventoryCode.encode(["0"]) == "BW20QZCX")
+        #expect(InventoryCode.encode(["2147483647"]) == "BW2Z5SDR000G007ZZR")
+    }
+
+    @Test func hinUndZurueck() {
+        #expect(roundTrip(catalog.shuffled()) == .valid(bookIds: catalog, unknownCount: 0))
+    }
+
+    @Test func doppelteUndNichtNumerischeIdsZaehlenNicht() {
+        #expect(InventoryCode.encode(["4", "23"]) == InventoryCode.encode(["23", "4", "4", "WBH2025", "007", ""]))
+        #expect(InventoryCode.encode(["WBH2025", "-1", "2147483648", "٤"]) == nil)
+        #expect(InventoryCode.encode([]) == nil)
+    }
+
+    @Test func codeOhneStriche() {
+        #expect(InventoryCode.encode(catalog)!.range(of: #"^BW2[0-9A-HJKMNP-TV-Z]+$"#, options: .regularExpression) != nil)
+    }
+
+    @Test func unbekannteBuecherKommenAlsAnzahlAn() {
+        #expect(roundTrip(["4", "5000"], receiver: ["4"]) == .valid(bookIds: ["4"], unknownCount: 1))
+        #expect(roundTrip(["4", "23"], receiver: []) == .valid(bookIds: [], unknownCount: 2))
+    }
+
+    @Test func codeMittenInNachrichtKleingeschriebenMitOUndL() {
+        let message = "Hallo zusammen, hier unser Inventar:\nbw23chparal5ov0btno4ng0770\nViele Grüße"
+        #expect(books(message) == Set(catalog))
+        #expect(InventoryCode.find(message) == "BW23CHPARA150V0BTN04NG0770")
+    }
+
+    @Test func aufgeteilterUndUmgebrochenerCode() {
+        for text in ["BW23CHPA-RA150-V0BTN-04NG0-770", "BW2 3CHPA RA150 V0BTN 04NG0 770", "BW23CHPARA150V0—BTN04NG0770",
+                     "> Hier unser Inventar:\n> BW23CHPARA150\n> V0BTN04NG0770\n> Viele Grüße",
+                     "BW23CHPARA150\r\nV0BTN04NG0770", "bw2 3chpa-ra150\n> v0btn-04ng0-770"] {
+            #expect(books(text) == Set(catalog), "\(text)")
+            #expect(InventoryCode.find(text) == "BW23CHPARA150V0BTN04NG0770", "\(text)")
+        }
+    }
+
+    /// Ein Wort hinter dem Code gehört nicht dazu, auch wenn es nur aus Base32-Zeichen besteht.
+    @Test func wortHinterDemCode() {
+        #expect(books("Hier: BW2SK2NFZGR Euer Chor") == ["4035"])
+        #expect(books("BW2SK2NFZGR\nDas war's") == ["4035"])
+        #expect(books("BW2SK2NFZGR 0000") == ["4035"])
+        #expect(InventoryCode.find("Hier: BW2SK2NFZGR. Bis Sonntag") == "BW2SK2NFZGR")
+    }
+
+    @Test func geaendertesFehlendesOderFalschesZeichenIstUngueltig() {
+        let code = Array("BW23CHPARA150V0BTN04NG0770")
+        for i in 3..<code.count {
+            for c in "0123456789ABCDEFGHJKMNPQRSTVWXYZ" where c != code[i] {
+                var changed = code
+                changed[i] = c
+                #expect(InventoryCode.decode(String(changed), catalog: catalog) == .invalid, "\(String(changed))")
+            }
+            var missing = code
+            missing.remove(at: i)
+            #expect(InventoryCode.decode(String(missing), catalog: catalog) == .invalid, "\(String(missing))")
+        }
+        #expect(InventoryCode.decode(String(code.dropLast()) + "U", catalog: catalog) == .invalid)
+    }
+
+    @Test func textIstKeinCode() {
+        #expect(InventoryCode.decode("Lobe den Herren", catalog: catalog) == .notFound)
+        #expect(InventoryCode.decode("Die BW2 ist da", catalog: catalog) == .notFound)
+        #expect(InventoryCode.decode("ABW23CHPARA150V0BTN04NG0770", catalog: catalog) == .notFound)
+        #expect(InventoryCode.decode("BW2", catalog: catalog) == .notFound)
+        #expect(InventoryCode.find("Die BW2 ist da") == nil)
+    }
+
+    @Test func beschaedigterCodeWirdTrotzdemGefunden() {
+        #expect(InventoryCode.decode("Hier: BW2SK2NFZGX, Grüße", catalog: catalog) == .invalid)
+        #expect(InventoryCode.find("Hier: BW2SK2NFZGX, Grüße") == "BW2SK2NFZGX")
+    }
+
+    @Test func neuerCodeGehtVorAltem() {
+        let text = "Alt: BBW-0RJT-GA6Y\nNeu: BW2SK2NFZGR"
+        #expect(books(text) == ["4035"])
+        #expect(InventoryCode.find(text) == "BW2SK2NFZGR")
+    }
+
+    @Test func alterCodeWirdWeiterGelesen() {
+        let legacyCatalog = ["4035", "4", "23"]
+        let legacy = LegacyInventoryCode.encode(["4035", "23"], catalog: legacyCatalog)
+        guard case let .valid(ids, 0) = InventoryCode.decode("Hier: \(legacy)", catalog: legacyCatalog) else { Issue.record(); return }
+        #expect(Set(ids) == ["4035", "23"])
+        #expect(InventoryCode.find("Hier: \(legacy)") == legacy)
+    }
+
+    @Test func beschaedigterNeuerCodeNebenGueltigemAlten() {
+        let legacy = LegacyInventoryCode.encode(["4035"], catalog: catalog)
+        #expect(InventoryCode.decode("BW2SK2NFZGX \(legacy)", catalog: catalog) == .valid(bookIds: ["4035"], unknownCount: 0))
+    }
+}
+
+/// Alte Codes (`BBW-…`) müssen über `InventoryCode` lesbar bleiben. Erzeugt werden sie nur noch hier.
+struct LegacyInventoryCodeTests {
+
+    private let catalog = ["WBH2025", "BläshBay22", "101Bläserv", "30klChorRe", "ZGLE 84", "RomantischesSpielbuch"]
+
+    private func roundTrip(_ ids: [String], sender: [String]? = nil, receiver: [String]? = nil) -> InventoryCode.Result {
+        InventoryCode.decode(LegacyInventoryCode.encode(ids, catalog: sender ?? catalog), catalog: receiver ?? catalog)
+    }
+
+    /// Codes aus der Kotlin-Implementierung (LegacyInventoryCode.kt). Weicht einer ab, lesen
+    /// Android und iOS alte Inventar-Codes nicht mehr gleich.
+    @Test func gleicheCodesWieAndroid() {
         let catalog = self.catalog + ["Fünfgeld T", "Ach Gott, dir muss ich's"]
-        #expect(InventoryCode.encode(["WBH2025"], catalog: catalog) == "BBW-0RJT-GA6Y")
-        #expect(InventoryCode.encode(["WBH2025", "BläshBay22", "ZGLE 84"], catalog: catalog) == "BBW-02J3-086P-GA6Y-SXQM")
-        #expect(InventoryCode.encode(["101Bläserv", "Fünfgeld T", "Ach Gott, dir muss ich's", "RomantischesSpielbuch"], catalog: catalog)
+        #expect(LegacyInventoryCode.encode(["WBH2025"], catalog: catalog) == "BBW-0RJT-GA6Y")
+        #expect(LegacyInventoryCode.encode(["WBH2025", "BläshBay22", "ZGLE 84"], catalog: catalog) == "BBW-02J3-086P-GA6Y-SXQM")
+        #expect(LegacyInventoryCode.encode(["101Bläserv", "Fünfgeld T", "Ach Gott, dir muss ich's", "RomantischesSpielbuch"], catalog: catalog)
             == "BBW-01CY-5RTT-TQY1-WP83-YS8B")
         #expect(InventoryCode.decode("BBW-02J3-086P-GA6Y-SXQM", catalog: catalog)
-            == .valid(bookIds: ["ZGLE 84", "BläshBay22", "WBH2025"].sorted { InventoryCode.hash(0, $0) < InventoryCode.hash(0, $1) }, unknownCount: 0))
+            == .valid(bookIds: ["ZGLE 84", "BläshBay22", "WBH2025"].sorted { LegacyInventoryCode.hash(0, $0) < LegacyInventoryCode.hash(0, $1) }, unknownCount: 0))
     }
 
     @Test func eineGruppeJeBuch() {
-        let code = InventoryCode.encode(["WBH2025", "BläshBay22"], catalog: catalog)
+        let code = LegacyInventoryCode.encode(["WBH2025", "BläshBay22"], catalog: catalog)
         #expect(code.range(of: #"^BBW(-[0-9A-HJKMNP-TV-Z]{4}){3}$"#, options: .regularExpression) != nil)
     }
 
@@ -34,14 +149,14 @@ struct InventoryCodeTests {
     }
 
     @Test func codeMittenInNachrichtUndKleingeschrieben() {
-        let code = InventoryCode.encode(["WBH2025"], catalog: catalog)
+        let code = LegacyInventoryCode.encode(["WBH2025"], catalog: catalog)
         let message = "Hallo zusammen, hier unser Inventar:\n\(code.lowercased())\nViele Grüße"
         #expect(InventoryCode.decode(message, catalog: catalog) == .valid(bookIds: ["WBH2025"], unknownCount: 0))
     }
 
     @Test func zerlegteUmlauteGebenDenselbenCode() {
         let decomposed = "BläshBay22".decomposedStringWithCanonicalMapping
-        #expect(InventoryCode.encode(["BläshBay22"], catalog: catalog) == InventoryCode.encode([decomposed], catalog: catalog))
+        #expect(LegacyInventoryCode.encode(["BläshBay22"], catalog: catalog) == LegacyInventoryCode.encode([decomposed], catalog: catalog))
     }
 
     @Test func ohneCode() {
@@ -49,7 +164,7 @@ struct InventoryCodeTests {
     }
 
     @Test func geaenderteGruppeNieFalschesBuch() {
-        let code = InventoryCode.encode(["WBH2025", "BläshBay22"], catalog: catalog)
+        let code = LegacyInventoryCode.encode(["WBH2025", "BläshBay22"], catalog: catalog)
         let broken = String(code.dropLast()) + (code.last == "0" ? "1" : "0")
         switch InventoryCode.decode(broken, catalog: catalog) {
         case .valid(_, let unknown): #expect(unknown == 1)
@@ -112,15 +227,15 @@ struct InventoryCodeTests {
     }
 
     @Test func leererKatalog() {
-        let code = InventoryCode.encode(["WBH2025", "BläshBay22"], catalog: catalog)
+        let code = LegacyInventoryCode.encode(["WBH2025", "BläshBay22"], catalog: catalog)
         #expect(InventoryCode.decode(code, catalog: []) == .valid(bookIds: [], unknownCount: 2))
     }
 
     /// Kotlin vergleicht IDs Byte für Byte. Kanonisch gleiche IDs in NFC und NFD zählen dort doppelt,
-    /// also auch hier, sonst bauten beide Apps verschiedene Codes. Gleicher Wert in InventoryCodeTest.kt.
+    /// also auch hier, sonst bauten beide Apps verschiedene Codes. Gleicher Wert in LegacyInventoryCodeTest.kt.
     @Test func idsInNfcUndNfdZaehlenWieInKotlinDoppelt() {
         let nfc = "Bläser", nfd = "Bläser".decomposedStringWithCanonicalMapping
-        #expect(InventoryCode.encode([nfc, nfd], catalog: [nfc, nfd]) == "BBW-0MFE-H6E3-H6E3")
+        #expect(LegacyInventoryCode.encode([nfc, nfd], catalog: [nfc, nfd]) == "BBW-0MFE-H6E3-H6E3")
     }
 
     @Test func kollisionen() {
@@ -128,7 +243,7 @@ struct InventoryCodeTests {
         var pair: (String, String)?
         for i in 0..<100_000 {
             let id = "Buch\(i)"
-            if let previous = seen.updateValue(id, forKey: InventoryCode.hash(0, id)) { pair = (previous, id); break }
+            if let previous = seen.updateValue(id, forKey: LegacyInventoryCode.hash(0, id)) { pair = (previous, id); break }
         }
         let (a, b) = pair!
         #expect(roundTrip([a], sender: [a, b], receiver: [a, b]) == .valid(bookIds: [a], unknownCount: 0))

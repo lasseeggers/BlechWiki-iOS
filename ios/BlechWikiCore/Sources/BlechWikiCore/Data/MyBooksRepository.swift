@@ -43,9 +43,7 @@ public final class MyBooksRepository: Sendable {
 
     /// Code zum Teilen, `nil` bei leerem Inventar.
     public func inventoryCode() throws -> String? {
-        let owned = preferences.ownedBookIds
-        if owned.isEmpty { return nil }
-        return InventoryCode.encode(owned.sorted(), catalog: try db.bookIds())
+        InventoryCode.encode(Array(preferences.ownedBookIds))
     }
 
     /// Liest einen Inventar-Code aus `text`, z. B. einer ganzen weitergeleiteten Nachricht.

@@ -72,6 +72,6 @@ Screenshots: links Android (Galaxy S8, Android 9), rechts iOS (Simulator iPhone 
 
 - Bücher aus dem Notenschrank abhaken. Ihr Inhalt wird geladen und ist danach offline verfügbar.
 - Oben stehen Vorschläge für die gewählte Landeskirche, darunter Choralbücher und alle übrigen Bücher, neueste zuerst. Ein Suchfeld filtert die Liste.
-- **Inventar teilen:** Die App erzeugt einen Code (`BBW-…`) und verschickt ihn per Messenger oder Mail. So bekommt der ganze Chor dieselbe Liste.
+- **Inventar teilen:** Die App erzeugt einen Code (`BW2…`) und verschickt ihn per Messenger oder Mail. So bekommt der ganze Chor dieselbe Liste.
 - **Inventar übernehmen:** Die Nachricht mit dem Code an die App teilen oder den Code im Menü einfügen. Das bisherige Inventar lässt sich ergänzen oder ersetzen. Auf iOS geht das direkt im Teilen-Dialog („Inventar übernehmen“), ohne die App zu öffnen.
 - Android und iOS verwenden dasselbe Code-Format. Ein Code vom Android-Handy funktioniert auf dem iPhone und umgekehrt.
