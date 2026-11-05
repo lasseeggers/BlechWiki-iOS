@@ -52,11 +52,11 @@ struct HymnalView: View {
 
     private func songs(_ section: HymnalSection) -> some View {
         ForEach(section.songs) { song in
-            NavigationLink(value: Route.suchergebnisse(SuchergebnisseRoute(
-                query: .byEgMelody(song.ixUr), label: song.title, detail: "EG \(song.number)"
-            ))) {
-                SongRow(song: song)
+            let route = SuchergebnisseRoute(query: .byEgMelody(song.ixUr), label: song.title, detail: "EG \(song.number)", egIx: song.ix)
+            NavigationLink(value: Route.suchergebnisse(route)) {
+                SongRow(song: song, listRef: route.listRef)
             }
+            .listEntryMenu(route.listRef)
             .onAppear { model.songAppeared(in: section.occasion) }
             .onDisappear { model.songDisappeared(in: section.occasion) }
         }
@@ -178,6 +178,7 @@ private struct OccasionMenu: View {
 
 private struct SongRow: View {
     let song: HymnalSong
+    let listRef: ListEntryRef?
     @ScaledMetric private var numberWidth: CGFloat = 48
 
     var body: some View {
@@ -187,6 +188,8 @@ private struct SongRow: View {
                 .foregroundStyle(Color.brand)
                 .frame(width: numberWidth, alignment: .leading)
             Text(song.title)
+            Spacer(minLength: 0)
+            if let listRef { FavoriteMark(ref: listRef) }
         }
         .accessibilityElement(children: .combine)
     }

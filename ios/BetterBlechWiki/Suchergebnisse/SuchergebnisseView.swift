@@ -13,6 +13,7 @@ struct SuchergebnisseView: View {
     /// Mac: Aktualisieren über Knopf oder ⌘R läuft, im Knopf dreht sich ein Kreis.
     @State private var isManualRefresh = false
     @Environment(\.openRoute) private var openRoute
+    @Environment(ListActions.self) private var listActions: ListActions?
 
     init(container: AppContainer, route: SuchergebnisseRoute) {
         self.container = container
@@ -65,6 +66,13 @@ struct SuchergebnisseView: View {
                     BookmarkToggle(isOwned: model.routeBookOwned) { model.setOwned(bookId, owned: !model.routeBookOwned) }
                 }
             }
+            // Titel und EG-Lieder: Stern und Liste. Bücher und Komponisten kommen nicht in Listen.
+            if let ref = route.listRef, let listActions, listActions.isAvailable {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    FavoriteToggle(isFavorite: listActions.isFavorite(ref)) { listActions.toggleFavorite(ref) }
+                    ToolbarIconButton("Zu Liste hinzufügen …", systemImage: "text.badge.plus") { listActions.addToList(ref) }
+                }
+            }
             #if targetEnvironment(macCatalyst)
             // Ziehen zum Aktualisieren gibt es auf dem Mac nicht. ⌘R steht im Menü „Darstellung“.
             ToolbarItem(placement: .topBarTrailing) {
@@ -76,13 +84,21 @@ struct SuchergebnisseView: View {
             refresh: manualRefresh,
             bookOwned: route.bookId == nil ? nil : model.routeBookOwned,
             toggleBookOwned: route.bookId.map { bookId in { model.setOwned(bookId, owned: !model.routeBookOwned) } },
-            showCover: route.isBook ? { showCover = true } : nil
+            showCover: route.isBook ? { showCover = true } : nil,
+            isFavorite: listRef.map { listActions?.isFavorite($0) ?? false },
+            toggleFavorite: listRef.flatMap { ref in listActions.map { actions in { actions.toggleFavorite(ref) } } },
+            addToList: listRef.flatMap { ref in listActions.map { actions in { actions.addToList(ref) } } }
         ))
         .modifier(BookSearch(enabled: route.isBook, text: Bindable(model).bookFilter))
         .fullScreenCover(isPresented: $showCover) {
             CoverViewer(url: model.book?.coverUrl ?? content.books.first?.coverUrl, title: model.book?.title ?? route.label)
         }
         .task { await model.observe() }
+    }
+
+    /// Eintrag für Stern und Listen, nur für Titel und EG-Lieder und nur, wenn die Listen da sind.
+    private var listRef: ListEntryRef? {
+        listActions?.isAvailable == true ? route.listRef : nil
     }
 
     /// Mac: Catalyst zeigt `.principal` nicht, dafür den Titel immer in der Fensterleiste, nicht erst
@@ -174,6 +190,8 @@ struct SuchergebnisseView: View {
                     ForEach(Array(book.entries.enumerated()), id: \.offset) { _, entry in
                         FundstelleRow(fundstelle: entry, routeLabel: route.label, composerLinks: model.composerLinks)
                             .macRowPadding()
+                            .listEntryMenu(entry.listRef)
+                            .favoriteSwipeAction(entry.listRef)
                     }
                 }
             }
@@ -363,6 +381,7 @@ private struct FundstelleRow: View {
                 }
             }
             Spacer(minLength: 0)
+            FavoriteMark(ref: fundstelle.listRef)
         }
         .accessibilityElement(children: .combine)
         // Zusammengefasst sind die Links im Text für VoiceOver nicht erreichbar, daher als Aktionen
@@ -376,6 +395,13 @@ private struct FundstelleRow: View {
     private var linkedComposers: [ComposerLink] {
         var seen = Set<String>()
         return (fundstelle.composer.map(ComposerNames.split) ?? []).compactMap { composerLinks[$0] }.filter { seen.insert($0.id).inserted }
+    }
+}
+
+extension Fundstelle {
+    /// Diese Fundstelle als Eintrag für Favoriten und Listen.
+    var listRef: ListEntryRef {
+        .piece(bookId: bookId, bookTitle: bookTitle, number: number, title: title, addition: addition)
     }
 }
 

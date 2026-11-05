@@ -9,12 +9,16 @@ struct WindowNavigation {
     let back: (() -> Void)?
     let sidebarVisible: Bool
     let toggleSidebar: () -> Void
+    /// Einführung, wie „Hilfe“ auf der Startseite.
+    let showHelp: () -> Void
 }
 
 /// Befehle der Seite, die gerade rechts steht. Jede Seite setzt nur, was sie kann, der Rest bleibt
 /// im Menü ausgegraut. Ausblenden statt Ausgrauen ließe die Menüs je nach Seite springen.
 struct PageCommands {
     var refresh: (() -> Void)?
+    /// Einstellungen: „Alle Daten neu laden“ mit Rückfrage.
+    var reloadAll: (() -> Void)?
     /// Buchansicht: ob das Buch im Inventar ist, und Umschalten.
     var bookOwned: Bool?
     var toggleBookOwned: (() -> Void)?
@@ -26,6 +30,13 @@ struct PageCommands {
     var occasions: [String] = []
     var currentOccasion: String?
     var jumpToOccasion: ((String) -> Void)?
+    /// Suchergebnisse für Titel und EG-Lieder: ob das Lied Favorit ist, Umschalten und Blatt
+    /// „Zu Liste hinzufügen“.
+    var isFavorite: Bool?
+    var toggleFavorite: (() -> Void)?
+    var addToList: (() -> Void)?
+    /// Übersicht der Listen: Dialog „Neue Liste“.
+    var newList: (() -> Void)?
 }
 
 extension FocusedValues {
@@ -64,6 +75,8 @@ struct AppCommands: Commands {
             Button("Aktualisieren") { page?.refresh?() }
                 .keyboardShortcut("r")
                 .disabled(page?.refresh == nil)
+            Button("Alle Daten neu laden …") { page?.reloadAll?() }
+                .disabled(page?.reloadAll == nil)
             Button("Cover anzeigen") { page?.showCover?() }
                 .disabled(page?.showCover == nil)
         }
@@ -79,9 +92,10 @@ struct AppCommands: Commands {
             Button("Gesangbuch") { navigation?.select(.hymnal) }
                 .keyboardShortcut("2")
                 .disabled(navigation == nil)
-            Button("Landeskirche") { navigation?.select(.egAppendix) }
+            Button("Listen") { navigation?.select(.lists) }
+                .keyboardShortcut("3")
                 .disabled(navigation == nil)
-            Button("App-Informationen") { navigation?.select(.appInfo) }
+            Button("Einstellungen") { navigation?.select(.appInfo) }
                 .disabled(navigation == nil)
             Divider()
             Menu("Anlass") {
@@ -106,8 +120,21 @@ struct AppCommands: Commands {
                 .disabled(page?.importCode == nil)
         }
 
+        CommandMenu("Listen") {
+            Button(page?.isFavorite == true ? "Aus Favoriten entfernen" : "Zu Favoriten hinzufügen") { page?.toggleFavorite?() }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+                .disabled(page?.toggleFavorite == nil)
+            Button("Zu Liste hinzufügen …") { page?.addToList?() }
+                .disabled(page?.addToList == nil)
+            Divider()
+            Button("Neue Liste …") { page?.newList?() }
+                .disabled(page?.newList == nil)
+        }
+
         // Statt „Hilfe ist nicht verfügbar“
         CommandGroup(replacing: .help) {
+            Button("Einführung ansehen") { navigation?.showHelp() }
+                .disabled(navigation == nil)
             Button("Fehler melden") { UIApplication.shared.open(Self.issuesURL) }
             Divider()
             Button("Impressum") { UIApplication.shared.open(AppInfoView.impressumURL) }
@@ -118,8 +145,8 @@ struct AppCommands: Commands {
 
 #if targetEnvironment(macCatalyst)
 /// Einstellungen auf dem Mac, geöffnet mit ⌘, aus dem App-Menü. Die Landeskirche ist die einzige
-/// Einstellung, daher ein Fenster ohne Bereiche mit dem Titel „BlechWiki-Einstellungen“. Die Zeile
-/// „Landeskirche“ auf der Startseite bleibt, wie auf iPhone und Android.
+/// Einstellung, daher ein Fenster ohne Bereiche mit dem Titel „BlechWiki-Einstellungen“. Die Seite
+/// „Einstellungen“ auf der Startseite bleibt, wie auf iPhone und Android.
 struct SettingsWindow: View {
     /// Fenster-ID und zugleich einziger Wert: Ein zweites ⌘, holt das offene Fenster nach vorn,
     /// statt ein weiteres zu öffnen.

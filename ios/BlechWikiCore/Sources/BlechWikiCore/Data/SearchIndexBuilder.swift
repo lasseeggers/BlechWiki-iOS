@@ -26,21 +26,24 @@ enum SearchIndexBuilder {
         }
     }
 
-    /// Titel, die schon als EG-Lied im Index stehen, werden übersprungen. Gleich lautende Titel
-    /// mit verschiedenem ix (Stand 10/2026: zwei, mit Leerzeichen am Ende) bleiben getrennt,
-    /// weil die API sie getrennt liefert.
-    static func titleEntries(_ titles: [TitleEntity], egSongs: [EgSongEntity]) -> [SearchEntry] {
+    /// Ein Eintrag je normalisiertem Titel aus `titles` (Titel aller Fundstellen, mit Doppeln).
+    /// Schreibweisen wie „heiligen“ und „Heiligen“ werden ein Treffer, angezeigt in der häufigsten.
+    /// Titel, die schon als EG-Lied im Index stehen, werden übersprungen.
+    static func titleEntries(_ titles: [String], egSongs: [EgSongEntity]) -> [SearchEntry] {
         let egNorms = Set(egSongs.map { SearchNormalizer.normalize($0.title) })
-        return titles.compactMap { title in
-            let norm = SearchNormalizer.normalize(title.title)
+        return groupedInOrder(titles, by: SearchNormalizer.normalize).compactMap { spellings in
+            let norm = SearchNormalizer.normalize(spellings[0])
             guard !norm.isEmpty, !egNorms.contains(norm) else { return nil }
+            // Bei Gleichstand die erste in UTF-16-Ordnung, wie auf Android
+            let counts = Dictionary(spellings.map { ($0, 1) }, uniquingKeysWith: +)
+            let label = counts.sorted { $0.value != $1.value ? $0.value > $1.value : utf16Less($0.key, $1.key) }[0].key
             return SearchEntry(
-                content: SearchNormalizer.indexContent(title.title),
+                content: SearchNormalizer.indexContent(label),
                 norm: norm,
-                label: title.title,
+                label: label,
                 detail: nil,
                 type: .title,
-                refKey: String(title.ix),
+                refKey: norm,
                 refNumber: nil
             )
         }
@@ -102,33 +105,6 @@ enum SearchIndexBuilder {
         let original = (byIx[song.ixUr] ?? []).filter { $0.part != ergaenzungen }
         guard let title = original.first?.title else { return nil }
         return ["im EG als „\(title)“", egNumberLabel(original, appendix: appendix)].compactMap { $0 }.joined(separator: ", ")
-    }
-
-    /// Baut den ganzen Index und `fundstellen.titleNorm` aus den lokalen Tabellen neu, ohne Download
-    /// und ohne den Fundstellen-Cache zu verwerfen. Nötig, wenn sich `SearchNormalizer` ändert:
-    /// Alte Einträge passen sonst nicht mehr zu neuen Anfragen. Wie `SearchIndexMigration` auf Android.
-    static func rebuild(_ db: SQLiteConnection) throws {
-        let egSongs = try db.rows("SELECT ix, ixUr, title, part, number, occasion FROM eg_songs ORDER BY id") {
-            EgSongEntity(ix: $0.int(0), ixUr: $0.int(1), title: $0.text(2), part: $0.text(3), number: $0.int(4), occasion: $0.textOrNil(5))
-        }
-        let titles = try db.rows("SELECT ix, title FROM titles") { TitleEntity(ix: $0.int(0), title: $0.text(1)) }
-        let books = try db.rows("SELECT id, title, subtitle, year, editor, publisher, publisherNumber, coverUrl FROM books") {
-            BookEntity(
-                id: $0.text(0), title: $0.text(1), subtitle: $0.textOrNil(2), year: $0.intOrNil(3), editor: $0.textOrNil(4),
-                publisher: $0.textOrNil(5), publisherNumber: $0.textOrNil(6), coverUrl: $0.textOrNil(7)
-            )
-        }
-        let composers = try db.rows("SELECT id, name, born, died FROM composers") {
-            ComposerEntity(id: $0.text(0), name: $0.text(1), born: $0.textOrNil(2), died: $0.textOrNil(3))
-        }
-        try db.execute("DELETE FROM search_index")
-        try AppDatabase.insertSearchEntries(
-            db,
-            egSongEntries(egSongs) + titleEntries(titles, egSongs: egSongs) + bookEntries(books) + composerEntries(composers)
-        )
-        for title in try db.rows("SELECT DISTINCT title FROM fundstellen", map: { $0.text(0) }) {
-            try db.run("UPDATE fundstellen SET titleNorm = ? WHERE title = ?", [.text(SearchNormalizer.normalize(title)), .text(title)])
-        }
     }
 
     static func lifeDates(_ composer: ComposerEntity) -> String? {

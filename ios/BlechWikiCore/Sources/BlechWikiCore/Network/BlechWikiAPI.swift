@@ -4,16 +4,13 @@ import os
 /// Zugriff auf die REST-API von blechwiki.de. Jede Methode ist genau ein HTTP-Request. Caching passiert eine Schicht höher. Alle Fehler kommen als `BlechWikiError`.
 public protocol BlechWikiAPI: Sendable {
 
-    /// Titel, Bücher und Komponisten sind Nachschlagetabellen mit Änderungszähler. `after` = 0
-    /// liefert die ganze Tabelle ohne gelöschte Einträge. Bei `after` > 0 kommen nur Einträge,
-    /// deren letzte Änderung (auch Löschung) einen höheren Zähler hat. Einträge, die gemeinsam
+    /// Bücher und Komponisten sind Nachschlagetabellen mit Änderungszähler. `after` = 0 liefert
+    /// die ganze Tabelle ohne gelöschte Einträge. Bei `after` > 0 kommen nur Einträge, deren
+    /// letzte Änderung (auch Löschung) einen höheren Zähler hat. Einträge, die gemeinsam
     /// geändert wurden, haben denselben Zähler.
-    func getTitles(after: Int) async throws -> TableRows<TitleDto>
-
-    /// Siehe `getTitles`.
     func getBooks(after: Int) async throws -> TableRows<BookDto>
 
-    /// Siehe `getTitles`. Schreibvarianten stehen als eigene Einträge in der Liste.
+    /// Siehe `getBooks`. Schreibvarianten stehen als eigene Einträge in der Liste.
     func getComposers(after: Int) async throws -> TableRows<ComposerDto>
 
     /// Alle EG-Lieder, ein Eintrag je Lied und Teil. Statisch, ohne Änderungszähler.
@@ -24,17 +21,15 @@ public protocol BlechWikiAPI: Sendable {
     /// eingebaute Liste.
     func getEgAppendices() async throws -> [EgAppendixDto]
 
-    /// `ix` ist `TitleDto.ix`.
-    func getFundstellenByTitle(_ ix: Int) async throws -> [FundstelleDto]
+    /// Alle Fundstellen mit höherem Zähler als `after`, bei 0 alle (ca. 7,5 MB ohne gzip). Neue
+    /// Bücher kommen so dazu. Korrekturen bekommen einen neuen Zähler, Löschungen meldet der
+    /// Server nicht, siehe `getBookPieceCounters`.
+    func getPieces(after: Int) async throws -> [PieceDto]
 
-    /// Alle Sätze zur Melodie `ixUr`, auch unter anderem Liedtext.
-    func getFundstellenByEgSong(_ ixUr: Int) async throws -> [FundstelleDto]
-
-    /// `bookId` ist `BookDto.id`.
-    func getFundstellenByBook(_ bookId: String) async throws -> [FundstelleDto]
-
-    /// `composerId` ist `ComposerDto.id`.
-    func getFundstellenByComposer(_ composerId: String) async throws -> [FundstelleDto]
+    /// Zähler (`PieceDto.counter`) aller Fundstellen, die der Server für das Buch `bookId`
+    /// (`BookDto.id`) noch kennt. Fehlt einer Zeile der Zähler, gilt die Antwort als fehlerhaft,
+    /// damit der Abgleich nichts löscht, was noch da ist.
+    func getBookPieceCounters(_ bookId: String) async throws -> Set<Int>
 }
 
 /// REST-API von Dieter Kipp, Beschreibung in docs/ARCHITEKTUR.md.
@@ -101,21 +96,11 @@ public final class JsonBlechWikiAPI: BlechWikiAPI {
         }
     }
 
-    public func getTitles(after: Int = 0) async throws -> TableRows<TitleDto> {
-        try await getTable("Titel", after: after) { row in
-            TitleDto(
-                ix: try row.int("ix"),
-                title: try row.text("titel").trimmingCharacters(in: .whitespaces),
-                deleted: row.isDeleted,
-                changeCounter: try row.int("changecounter")
-            )
-        }
-    }
-
     public func getBooks(after: Int = 0) async throws -> TableRows<BookDto> {
         try await getTable("Buch", after: after) { row in
             BookDto(
                 id: try row.text("buchId"),
+                shortName: try row.text("buchkurz").trimmingCharacters(in: .whitespaces),
                 title: try row.text("buch").trimmingCharacters(in: .whitespaces),
                 subtitle: row.textOrNil("untertitel"),
                 year: row.textOrNil("erscheinjahr").flatMap { Int($0) }.flatMap { $0 > 0 ? $0 : nil },
@@ -131,15 +116,20 @@ public final class JsonBlechWikiAPI: BlechWikiAPI {
     }
 
     public func getComposers(after: Int = 0) async throws -> TableRows<ComposerDto> {
-        try await getTable("Komponist", after: after) { row in
-            // Seit 05.11.2026 mit AutoNr, Geboren, Gestorben und aliasvon. Gibt es beide Formate, gilt das neue.
-            if row.values["AutoNr"] != nil {
+        try await getTable("Komponist", after: after) { original in
+            // Die Schreibweise der Feldnamen hat sich am 05.11.2026 zweimal geändert, z. B. Geboren und geboren
+            let row = Row(path: original.path, values: Dictionary(
+                original.values.map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { first, _ in first }
+            ))
+            // Seit 05.11.2026 mit geboren, gestorben und aliasvon, die Nummer zeitweise als AutoNr statt id
+            if row.values["aliasvon"] != nil {
                 let isAlias = row.textOrNil("aliasvon") != nil
                 return ComposerDto(
-                    id: try row.text("AutoNr"),
-                    name: try row.text("FriendlyKomponistName").trimmingCharacters(in: .whitespaces),
-                    born: isAlias ? nil : row.textOrNil("Geboren"),
-                    died: isAlias ? nil : row.textOrNil("Gestorben"),
+                    id: try row.textOrNil("autonr") ?? row.text("id"),
+                    shortName: row.textOrNil("kurz"),
+                    name: try row.text("friendlykomponistname").trimmingCharacters(in: .whitespaces),
+                    born: isAlias ? nil : row.textOrNil("geboren"),
+                    died: isAlias ? nil : row.textOrNil("gestorben"),
                     isAlias: isAlias,
                     deleted: row.isDeleted,
                     changeCounter: try row.int("changecounter")
@@ -151,7 +141,8 @@ public final class JsonBlechWikiAPI: BlechWikiAPI {
             let dates = isAlias ? (born: nil, died: nil) : Self.lifeDates(details)
             return ComposerDto(
                 id: try row.text("id"),
-                name: try row.text("friendlyKomponistName").trimmingCharacters(in: .whitespaces),
+                shortName: row.textOrNil("kurz"),
+                name: try row.text("friendlykomponistname").trimmingCharacters(in: .whitespaces),
                 born: dates.born,
                 died: dates.died,
                 isAlias: isAlias,
@@ -194,20 +185,54 @@ public final class JsonBlechWikiAPI: BlechWikiAPI {
         }
     }
 
-    public func getFundstellenByTitle(_ ix: Int) async throws -> [FundstelleDto] {
-        try await getFundstellen("Titel", String(ix))
+    public func getPieces(after: Int = 0) async throws -> [PieceDto] {
+        precondition(after >= 0, "after darf nicht negativ sein: \(after)")
+        // Ohne neue Bücher kommt [] zurück, das ist kein Formatfehler
+        return try await get(["Titel"], [("titelzaehler", String(after))]) { json in
+            try Self.rows(json, "Titel", allowNone: after > 0, Self.piece)
+        }
     }
 
-    public func getFundstellenByEgSong(_ ixUr: Int) async throws -> [FundstelleDto] {
-        try await getFundstellen("EG", String(ixUr))
+    public func getBookPieceCounters(_ bookId: String) async throws -> Set<Int> {
+        try await get(["Buch", bookId]) { json in
+            guard let array = json as? [Any] else { throw BlechWikiError.malformedResponse("Buch: kein Array") }
+            // Zahl als Text, z. B. "63740". Ohne Zähler ließe sich nicht sagen, welche Zeile fehlt.
+            return Set(try array.map { element in
+                guard let object = element as? [String: Any] else { throw BlechWikiError.malformedResponse("Buch: kein Objekt") }
+                let text = try Row(path: "Buch", values: object).text("titelZ").trimmingCharacters(in: .whitespaces)
+                guard let counter = Int(text) else { throw BlechWikiError.malformedResponse("Buch: titelZ ist keine Zahl") }
+                return counter
+            })
+        }
     }
 
-    public func getFundstellenByBook(_ bookId: String) async throws -> [FundstelleDto] {
-        try await getFundstellen("Buch", bookId)
+    /// Liest den mitgelieferten Stand der Fundstellen (`data/fundstellen.json.gz` entpackt,
+    /// dasselbe Format wie `getPieces`).
+    /// - Throws: `BlechWikiError.malformedResponse`, wenn keine Zeile lesbar ist
+    public static func parsePieces(_ data: Data) throws -> [PieceDto] {
+        let json: Any
+        do {
+            json = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw BlechWikiError.malformedResponse("Stand der Fundstellen: kein JSON")
+        }
+        return try rows(json, "Stand der Fundstellen", piece)
     }
 
-    public func getFundstellenByComposer(_ composerId: String) async throws -> [FundstelleDto] {
-        try await getFundstellen("Komponist", composerId)
+    private static func piece(_ row: Row) throws -> PieceDto {
+        PieceDto(
+            counter: try row.int("Zähler"),
+            bookShortName: try row.text("Quelle_kurz").trimmingCharacters(in: .whitespaces),
+            number: try row.text("Seite_Nr").trimmingCharacters(in: .whitespaces),
+            title: try row.text("Titel").trimmingCharacters(in: .whitespaces),
+            addition: row.textOrNil("Titel2"),
+            keySignature: row.textOrNil("Vorzeich"),
+            // 0 bei Stücken, die kein EG-Lied sind
+            egIx: (try? row.int("EGIx")).flatMap { $0 > 0 ? $0 : nil },
+            scoring: row.textOrNil("Besetzung"),
+            composerShortName: row.textOrNil("Kompo_kurz"),
+            composerShortName2: row.textOrNil("Kompo_kurz2")
+        )
     }
 
     private func getTable<T>(_ table: String, after: Int, mapRow: (Row) throws -> T) async throws -> TableRows<T> {
@@ -222,24 +247,6 @@ public final class JsonBlechWikiAPI: BlechWikiAPI {
             // Formatwechsel, solange sich wenigstens der Zähler lesen lässt.
             let rows = try Self.rows(json, "Version", allowNone: after > 0 && !counters.isEmpty, mapRow)
             return TableRows(rows: rows, maxCounter: counters.max() ?? 0)
-        }
-    }
-
-    private func getFundstellen(_ resource: String, _ key: String) async throws -> [FundstelleDto] {
-        try await get([resource, key]) { json in
-            try Self.rows(json, resource) { row in
-                FundstelleDto(
-                    bookId: try row.text("buchId"),
-                    bookTitle: try row.text("buch").trimmingCharacters(in: .whitespaces),
-                    number: try row.text("nr").trimmingCharacters(in: .whitespaces),
-                    title: try row.text("titel").trimmingCharacters(in: .whitespaces),
-                    addition: row.textOrNil("zus"),
-                    composer: row.textOrNil("komponist"),
-                    scoring: row.textOrNil("besetzung"),
-                    keySignature: row.textOrNil("vorzeichen"),
-                    coverUrl: Self.coverUrl(try row.text("quellekurz"))
-                )
-            }
         }
     }
 

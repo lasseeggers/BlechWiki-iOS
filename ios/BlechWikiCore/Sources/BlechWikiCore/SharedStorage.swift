@@ -16,12 +16,7 @@ public enum SharedStorage {
 
     /// Datenbank im Container der App Group, vom iCloud-Backup ausgenommen, weil alles neu ladbar ist.
     public static func databaseURL() throws -> URL {
-        // Auf dem Mac gibt es den Pfad auch ohne Berechtigung, nur der Zugriff scheitert dann
-        let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
-            .flatMap { FileManager.default.isWritableFile(atPath: $0.path) ? $0 : nil }
-        let dir = try group
-            ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        var url = dir.appendingPathComponent("blechwiki.sqlite")
+        var url = try directory().appendingPathComponent("blechwiki.sqlite")
         if !FileManager.default.fileExists(atPath: url.path) {
             FileManager.default.createFile(atPath: url.path, contents: nil)
         }
@@ -29,6 +24,21 @@ public enum SharedStorage {
         values.isExcludedFromBackup = true
         try? url.setResourceValues(values)
         return url
+    }
+
+    /// Favoriten und eigene Listen (`ListsDatabase`). Eigene Datei neben der Datenbank, weil
+    /// die bei Schemawechseln verworfen wird. Bewusst nicht vom Backup ausgenommen: Die Listen lassen
+    /// sich nicht neu laden.
+    public static func listsDatabaseURL() throws -> URL {
+        try directory().appendingPathComponent("listen.sqlite")
+    }
+
+    private static func directory() throws -> URL {
+        // Auf dem Mac gibt es den Pfad auch ohne Berechtigung, nur der Zugriff scheitert dann
+        let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
+            .flatMap { FileManager.default.isWritableFile(atPath: $0.path) ? $0 : nil }
+        return try group
+            ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
     }
 
     /// Löscht die Datenbank mit WAL-Dateien und Markierung. Eine WAL-Datei neben einer neuen

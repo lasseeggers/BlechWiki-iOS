@@ -6,7 +6,8 @@ import os
 /// kaum laufen, deshalb passiert alles, solange die App offen ist:
 /// - beim Aktivieren der App der Stammdaten-Abgleich (überspringt sich selbst, wenn jünger als 24 h),
 ///   im WLAN zusätzlich der monatliche Vollabgleich
-/// - danach und nach jeder Inventar-Änderung das Laden der Inventar-Bücher, nacheinander
+/// - danach und nach jeder Inventar-Änderung der Abgleich der Inventar-Bücher mit `Buch/{id}`,
+///   nacheinander, je Buch höchstens alle 30 Tage
 /// - bei Fehlern bis zu drei Wiederholungen mit wachsendem Abstand (30 s, 60 s, 120 s)
 ///
 /// Wer schreibt, bittet iOS über `beginBackgroundWork` um etwas Zeit im Hintergrund. Die
@@ -68,6 +69,12 @@ public final class SyncCoordinator {
         await startSync(force: true, fullRefreshIfDue: false, retries: 0).value
     }
 
+    /// „Alle Daten neu laden“: alles vom Server, auch alle Fundstellen (ca. 8,5 MB). Ersetzt einen
+    /// laufenden Abgleich. Fortschritt über `status`.
+    public func reloadAll() {
+        startSync(force: true, fullRefreshIfDue: false, reloadAll: true)
+    }
+
     /// Nach Änderungen am Inventar. Die Verzögerung fasst mehrere Klicks zu einem Lauf zusammen.
     public func downloadOwnedBooks() {
         startOwnedBooks(delay: .seconds(2))
@@ -81,23 +88,28 @@ public final class SyncCoordinator {
     }
 
     @discardableResult
-    private func startSync(force: Bool, fullRefreshIfDue: Bool, retries: Int = SyncCoordinator.maxRetries) -> Task<Bool, Never> {
+    private func startSync(
+        force: Bool,
+        fullRefreshIfDue: Bool,
+        reloadAll: Bool = false,
+        retries: Int = SyncCoordinator.maxRetries
+    ) -> Task<Bool, Never> {
         syncTask?.cancel()
         if fullRefreshIfDue { fullRefreshPending = false }
         let task = Task { [weak self] in
-            await self?.runSync(force: force, fullRefreshIfDue: fullRefreshIfDue, retries: retries) ?? false
+            await self?.runSync(force: force, fullRefreshIfDue: fullRefreshIfDue, reloadAll: reloadAll, retries: retries) ?? false
         }
         syncTask = task
         return task
     }
 
-    private func runSync(force: Bool, fullRefreshIfDue: Bool, retries: Int) async -> Bool {
+    private func runSync(force: Bool, fullRefreshIfDue: Bool, reloadAll: Bool, retries: Int) async -> Bool {
         defer { if !Task.isCancelled { syncTask = nil } }
         for attempt in 0...retries {
             status = .running
             do {
                 let outcome = try await withBackgroundTime("Abgleich") {
-                    try await sync.sync(force: force, fullRefreshIfDue: fullRefreshIfDue)
+                    try await sync.sync(force: force, fullRefreshIfDue: fullRefreshIfDue, reloadAll: reloadAll)
                 }
                 log.info("Stammdaten-Abgleich: \(String(describing: outcome))")
                 if fullRefreshPending, !Task.isCancelled {
@@ -136,9 +148,10 @@ public final class SyncCoordinator {
         }
     }
 
-    /// Lädt den Inhalt aller markierten Bücher. Bücher mit frischem Cache kosten keinen Request.
-    /// Bücher, die nicht (mehr) im Verzeichnis stehen, beantwortet der Server mit HTTP 500. Sie
-    /// kosteten sonst bei jedem Aktivieren alle Wiederholungen und bleiben deshalb außen vor.
+    /// Gleicht alle markierten Bücher mit `Buch/{id}` ab, um gelöschte Fundstellen zu finden. Bücher,
+    /// die in den letzten 30 Tagen abgeglichen wurden, kosten keinen Request. Bücher, die nicht
+    /// (mehr) im Verzeichnis stehen, beantwortet der Server mit HTTP 500. Sie kosteten sonst bei
+    /// jedem Aktivieren alle Wiederholungen und bleiben deshalb außen vor.
     private func runOwnedBooks() async {
         for attempt in 0...Self.maxRetries {
             let owned = preferences.ownedBookIds
@@ -156,7 +169,7 @@ public final class SyncCoordinator {
                     log.warning("Buch \(id) konnte nicht geladen werden: \(String(describing: error))")
                 }
             }
-            log.info("Inventar: \(ids.count) Bücher, \(loaded) geladen, \(failed) fehlgeschlagen, \(owned.count - ids.count) nicht im Verzeichnis")
+            log.info("Inventar: \(ids.count) Bücher, \(loaded) abgeglichen, \(failed) fehlgeschlagen, \(owned.count - ids.count) nicht im Verzeichnis")
             if failed == 0 || attempt == Self.maxRetries { return }
             try? await Task.sleep(for: Self.backoff * (1 << attempt))
             if Task.isCancelled { return }

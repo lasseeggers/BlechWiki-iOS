@@ -8,13 +8,16 @@ struct SearchView: View {
     let container: AppContainer
     /// Gewählte Zeile. Bleibt markiert, solange ihre Seite rechts daneben steht.
     @Binding var selection: Route?
+    /// Einführung erneut zeigen.
+    let onShowHelp: () -> Void
     @State private var box = ModelBox<SearchModel>()
     /// Suchtext über das Beenden der App hinweg, wie `rememberSaveable` auf Android.
     @SceneStorage("search.query") private var savedQuery = ""
 
-    init(container: AppContainer, selection: Binding<Route?>) {
+    init(container: AppContainer, selection: Binding<Route?>, onShowHelp: @escaping () -> Void) {
         self.container = container
         _selection = selection
+        self.onShowHelp = onShowHelp
     }
 
     var body: some View {
@@ -36,7 +39,7 @@ struct SearchView: View {
         if model.initialLoad != .ready {
             InitialLoadView(state: model.initialLoad, onRetry: model.retrySync)
         } else if trimmed.isEmpty {
-            StartView(state: model.start, selection: $selection)
+            StartView(state: model.start, selection: $selection, onShowHelp: onShowHelp)
         } else if model.results.isEmpty && model.resultsAreCurrent {
             ContentUnavailableView {
                 Label("Keine Treffer für „\(trimmed)“", systemImage: "magnifyingglass")
@@ -74,10 +77,12 @@ private struct ResultList: View {
         if !items.isEmpty {
             Section {
                 ForEach(items, id: \.self) { result in
-                    NavigationLink(value: Route.suchergebnisse(SuchergebnisseRoute(result))) {
+                    let route = SuchergebnisseRoute(result)
+                    NavigationLink(value: Route.suchergebnisse(route)) {
                         // Abstand wie auf der Startseite, sonst klebt die Markierung am Text
-                        ResultRow(result: result, detailAsOverline: detailAsOverline).macRowPadding(5)
+                        ResultRow(result: result, listRef: route.listRef, detailAsOverline: detailAsOverline).macRowPadding(5)
                     }
+                    .listEntryMenu(route.listRef)
                 }
             } header: {
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Color.brand)
@@ -101,6 +106,8 @@ private struct ResultListStyle: ViewModifier {
 
 private struct ResultRow: View {
     let result: SearchResult
+    /// EG-Lieder und Titel, für den Stern bei Favoriten.
+    let listRef: ListEntryRef?
     let detailAsOverline: Bool
 
     var body: some View {
@@ -116,44 +123,20 @@ private struct ResultRow: View {
                     Text(detail).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
+            Spacer(minLength: 0)
             if result.isOwnedBook {
-                Spacer()
                 Image(systemName: "bookmark.fill").brandForeground()
                     .accessibilityLabel("Im Inventar")
             }
+            if let listRef { FavoriteMark(ref: listRef) }
         }
-    }
-}
-
-/// "Im Inventar: Bläserheft 2022 Bayern Nr. 43, 44 und 2 weitere Bücher"
-private struct OwnedLine: View {
-    let locations: [OwnedLocation]
-
-    var body: some View {
-        // Mehrere Sätze im selben Heft (Vorspiel, Satz, Zwischenspiel) sind ein Buch, nicht mehrere Treffer
-        let byBook = groupedInOrder(locations, by: \.bookTitle)
-        let first = byBook[0]
-        var seen = Set<String>()
-        let numbers = first.map(\.number).filter { seen.insert($0).inserted }.joined(separator: ", ")
-        let more = switch byBook.count - 1 {
-        case 0: ""
-        case 1: " und 1 weiteres Buch"
-        case let n: " und \(n) weitere Bücher"
-        }
-        return Label {
-            Text("Im Inventar: \(first[0].bookTitle) Nr. \(numbers)\(more)").lineLimit(2)
-        } icon: {
-            Image(systemName: "bookmark.fill").imageScale(.small)
-        }
-        .font(.subheadline)
-        .brandForeground()
-        .labelStyle(.titleAndIcon)
     }
 }
 
 private struct StartView: View {
     let state: StartState
     @Binding var selection: Route?
+    let onShowHelp: () -> Void
 
     /// Auf dem Mac zeichnet die Liste keine Karten. Getrennte Abschnitte ergäben dort nur Lücken,
     /// die je nach Textlänge unterschiedlich groß wirken. Deshalb dort ein gemeinsamer Abschnitt.
@@ -164,18 +147,20 @@ private struct StartView: View {
             if Self.cards {
                 Section { intro }
                 Section { myBooksLink }
+                Section { listsLink }
                 Section { hymnalLink }
-                Section { appendixLink }
                 Section { appInfoLink }
+                Section { helpButton }
             } else {
                 // Mit eigenem Abstand oben und unten, sonst sitzt der Auswahlhintergrund dicht am Text,
                 // auffällig beim vierzeiligen Hinweis unter „Inventar“. Die Einführung steht auf dem
                 // Mac rechts in der leeren Seite, in der schmalen Spalte brach sie mitten im Wort um.
                 Section {
                     myBooksLink.macRowPadding(5)
+                    listsLink.macRowPadding(5)
                     hymnalLink.macRowPadding(5)
-                    appendixLink.macRowPadding(5)
                     appInfoLink.macRowPadding(5)
+                    helpButton.macRowPadding(5)
                 }
                 .listRowSeparator(.hidden)
             }
@@ -198,7 +183,7 @@ private struct StartView: View {
     private var myBooksLink: some View {
         NavigationLink(value: Route.myBooks) {
             HStack(alignment: .top, spacing: 12) {
-                InventoryIcon(filled: state.offlineStatus.owned > 0)
+                CardIcon(systemImage: state.offlineStatus.owned > 0 ? "bookmark.fill" : "bookmark")
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Inventar")
                     Text(inventoryText).font(.subheadline).foregroundStyle(.secondary)
@@ -207,40 +192,85 @@ private struct StartView: View {
         }
     }
 
-    // Kein Symbol wie beim Inventar: Dort zeigt es den Stand (gefüllt = Bücher eingetragen),
-    // hier wäre es nur Schmuck. Gleich wie in der Android-App.
-    private var hymnalLink: some View {
-        NavigationLink(value: Route.hymnal) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Gesangbuch")
-                Text(state.selectedAppendix.map { "Alle EG-Lieder nach Anlass, mit dem Anhang \($0.name)" }
-                    ?? "Alle EG-Lieder des Stammteils nach Anlass, z.\u{00A0}B. Advent oder Abend")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+    private var listsLink: some View {
+        NavigationLink(value: Route.lists) {
+            HStack(alignment: .top, spacing: 12) {
+                CardIcon(systemImage: state.favoriteCount > 0 ? "star.fill" : "star")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Listen")
+                    Text(listsText).font(.subheadline).foregroundStyle(.secondary)
+                }
             }
         }
     }
 
-    private var appendixLink: some View {
-        NavigationLink(value: Route.egAppendix) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Landeskirche")
-                Text(state.selectedAppendix?.name ?? "Nicht gewählt · für die Nummern der EG-Anhänge")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+    private var hymnalLink: some View {
+        NavigationLink(value: Route.hymnal) {
+            HStack(alignment: .top, spacing: 12) {
+                CardIcon(systemImage: "book.fill")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Gesangbuch")
+                    Text(state.selectedAppendix.map { "Alle EG-Lieder nach Anlass, mit dem Anhang \($0.name)" }
+                        ?? "Alle EG-Lieder des Stammteils nach Anlass, z.\u{00A0}B. Advent oder Abend")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
 
     private var appInfoLink: some View {
         NavigationLink(value: Route.appInfo) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("App-Informationen")
-                Text("Einführung, Aktualisierung, Version, Impressum und Datenschutz")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 12) {
+                CardIcon(systemImage: "gearshape.fill")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Einstellungen")
+                    Text("Landeskirche, Aktualisierung, Impressum und Datenschutz")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
+    }
+
+    /// Button statt Link: Öffnet die Einführung über der ganzen App, keine Seite. Als Link mit
+    /// eigener Route schob die Liste auf dem iPhone trotzdem die leere rechte Spalte nach vorn, nach
+    /// der Einführung stand man dort statt auf der Startseite. Der Pfeil ist dem der Links
+    /// nachgebaut, Farbe, Stärke und Abstand nach Screenshot abgeglichen.
+    private var helpButton: some View {
+        Button(action: onShowHelp) {
+            HStack(alignment: .top, spacing: 12) {
+                CardIcon(systemImage: "questionmark.circle.fill")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Hilfe")
+                    Text("Einführung in Suche, Inventar und Gesangbuch")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.forward")
+                    .imageScale(.small)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.tertiary)
+                    .padding(.trailing, 5.0 / 3)
+                    .frame(maxHeight: .infinity)
+            }
+            .contentShape(Rectangle())
+        }
+        // Grau wie die Unterzeilen der anderen Karten, sonst färbt der Button Text und Pfeil in der Akzentfarbe
+        .tint(Color.primary)
+    }
+
+    private var listsText: String {
+        if state.favoriteCount == 0 && state.otherListCount == 0 {
+            return "Favoriten und eigene Listen, z.\u{00A0}B. für ein Konzert"
+        }
+        let others = switch state.otherListCount {
+        case 0: "keine weiteren Listen"
+        case 1: "1 weitere Liste"
+        case let n: "\(n) weitere Listen"
+        }
+        return "Favoriten: \(state.favoriteCount) · \(others)"
     }
 
     private var inventoryText: String {
@@ -255,14 +285,15 @@ private struct StartView: View {
     }
 }
 
-/// Lesezeichen vor „Inventar“, gefüllt sobald Bücher eingetragen sind.
-private struct InventoryIcon: View {
-    let filled: Bool
+/// Symbol vor jeder Karte der Startseite. Lesezeichen gefüllt, sobald Bücher eingetragen sind, Stern
+/// gefüllt, sobald es Favoriten gibt. Die übrigen Symbole zeigen keinen Stand.
+private struct CardIcon: View {
+    let systemImage: String
     /// Wächst mit der Schriftgröße, sonst ragte das Symbol bei großer Schrift in den Text
     @ScaledMetric private var width: CGFloat = 24
 
     var body: some View {
-        Image(systemName: filled ? "bookmark.fill" : "bookmark")
+        Image(systemName: systemImage)
             .brandForeground()
             // Links bündig mit den Texten der anderen Karten, zentriert rückte das schmale Symbol ein
             .frame(width: width, alignment: .leading)
@@ -288,7 +319,7 @@ private struct InitialLoadView: View {
             VStack(spacing: 16) {
                 Text("Liederverzeichnis wird geladen …").font(.headline)
                 ProgressView().controlSize(.large)
-                Text("Einmalig ca. 2 MB. Danach funktioniert die Suche auch ohne Internet.")
+                Text("Einmalig ca. 1 MB. Danach funktioniert die Suche auch ohne Internet.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

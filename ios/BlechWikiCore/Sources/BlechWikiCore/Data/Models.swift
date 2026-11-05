@@ -1,9 +1,9 @@
 import Foundation
 
-/// Was die Fundstellen-Ansicht laden soll. `cacheKey` identifiziert den Eintrag im Cache.
+/// Was die Fundstellen-Ansicht zeigen soll. `cacheKey` identifiziert die Abfrage als Text.
 public enum FundstellenQuery: Hashable, Sendable {
-    /// `ix` des Titels.
-    case byTitle(Int)
+    /// Alle Stücke mit diesem Titel, normalisiert (SearchNormalizer), also auch in anderer Schreibweise.
+    case byTitle(String)
     /// Alle Sätze zu einer EG-Melodie, auch unter anderen Liedtexten.
     case byEgMelody(Int)
     case byBook(String)
@@ -12,11 +12,16 @@ public enum FundstellenQuery: Hashable, Sendable {
 
     public var cacheKey: String {
         switch self {
-        case .byTitle(let ix): "title:\(ix)"
+        case .byTitle(let titleNorm): "title:\(titleNorm)"
         case .byEgMelody(let ixUr): "eg:\(ixUr)"
         case .byBook(let bookId): "book:\(bookId)"
         case .byComposer(let id): "composer:\(id)"
         }
+    }
+
+    /// Titel-Abfrage für einen angezeigten Titel wie "Herr, das Licht deiner Liebe".
+    public static func title(_ title: String) -> FundstellenQuery {
+        .byTitle(SearchNormalizer.normalize(title))
     }
 }
 
@@ -25,7 +30,9 @@ public struct SearchResult: Hashable, Sendable {
     /// Zusatzzeile, z. B. "EG 316", Verlag oder Lebensdaten.
     public var detail: String?
     public var query: FundstellenQuery
-    /// Wo das Stück im Inventar steht. Nur für bereits geladene Bücher.
+    /// EG-Treffer: `ix` des Lieds. `query` nennt nur die Melodie, zu der mehrere Lieder gehören können.
+    public var egIx: Int?
+    /// Wo das Stück im Inventar steht, bei EG-Liedern alle Sätze zur Melodie.
     public var ownedLocations: [OwnedLocation] = []
     /// Für Buch-Treffer: steht im Inventar.
     public var isOwnedBook = false
@@ -163,4 +170,85 @@ public enum SyncStatus: Equatable, Sendable {
     /// Wartet auf den nächsten Versuch nach einem Fehler.
     case waiting(afterFailure: Bool)
     case failed
+}
+
+/// Art eines Listeneintrags, so steht sie in der Datenbank.
+public enum ListEntryKind: String, Sendable {
+    case title, piece, eg
+}
+
+/// Was in eine Liste kommt, mit den Rohfeldern, aus denen `ListEntryKey` den Schlüssel bildet.
+/// Die Felder zur Anzeige werden mitgespeichert, damit ein Eintrag auch ohne Stammdaten lesbar bleibt.
+public enum ListEntryRef: Hashable, Sendable {
+    /// Lied unabhängig vom Buch, aus einem Titel-Treffer.
+    case title(String)
+    /// Konkrete Fundstelle: dieses Stück in diesem Buch.
+    case piece(bookId: String, bookTitle: String, number: String, title: String, addition: String?)
+    /// EG-Lied. `label` ist die Nummer, wie sie beim Hinzufügen zu sehen war, z. B. „EG 316“.
+    case eg(ix: Int, ixUr: Int, title: String, label: String?)
+
+    public var key: String {
+        switch self {
+        case .title(let title): ListEntryKey.title(title)
+        case let .piece(bookId, _, number, title, addition): ListEntryKey.piece(bookId: bookId, number: number, title: title, addition: addition)
+        case .eg(let ix, _, _, _): ListEntryKey.eg(ix: ix)
+        }
+    }
+
+    public var kind: ListEntryKind {
+        switch self {
+        case .title: .title
+        case .piece: .piece
+        case .eg: .eg
+        }
+    }
+
+    public var title: String {
+        switch self {
+        case .title(let title): title
+        case .piece(_, _, _, let title, _): title
+        case .eg(_, _, let title, _): title
+        }
+    }
+}
+
+/// Eine Liste in der Übersicht.
+public struct ListSummary: Hashable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var entryCount: Int
+
+    public var isFavorites: Bool { id == ListsRepository.favoritesId }
+}
+
+/// Ein Eintrag einer Liste, ergänzt um den aktuellen Stand des Verzeichnisses und des Inventars.
+public struct ListEntryItem: Hashable, Sendable, Identifiable {
+    public var id: String
+    public var ref: ListEntryRef
+    public var comment: String?
+    /// Bei EG-Liedern und Fundstellen aus dem Verzeichnis, sonst wie gespeichert.
+    public var title: String
+    /// Titel: in wie vielen Büchern ein Stück mit diesem Titel steht.
+    public var bookCount: Int?
+    /// Titel und EG-Lieder: wo das Lied im Inventar steht, bei EG-Liedern alle Sätze zur Melodie.
+    public var ownedLocations: [OwnedLocation] = []
+    /// EG-Lieder: Nummer passend zur Landeskirche, z. B. „EG 316“.
+    public var egNumber: String?
+    /// Fundstellen: Buch, Nummer im Heft und Zusatz wie „Vorspiel“.
+    public var bookTitle: String?
+    public var number: String?
+    public var addition: String?
+    public var coverUrl: String?
+    /// Fundstelle, die es im Verzeichnis nicht mehr gibt.
+    public var isMissing = false
+    /// Fundstelle in einem Buch aus dem Inventar.
+    public var isOwnedBook = false
+}
+
+public struct ListDetail: Equatable, Sendable {
+    public var id: String
+    public var name: String
+    public var entries: [ListEntryItem]
+
+    public var isFavorites: Bool { id == ListsRepository.favoritesId }
 }

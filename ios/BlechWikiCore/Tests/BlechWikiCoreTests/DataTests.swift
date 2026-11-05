@@ -368,14 +368,22 @@ struct SearchIndexBuilderTests {
         #expect(SearchIndexBuilder.egNumberLabel([]) == nil)
     }
 
-    @Test func titleEntriesUeberspringtEgUndVerweistAufDenIx() {
+    @Test func titleEntriesUeberspringtEgUndFasstSchreibweisenZusammen() {
         let eg = [EgSongEntity(ix: 1, ixUr: 1, title: "Abend ist es Herr; die Stunde", part: "P", number: 673, occasion: nil)]
         let entries = SearchIndexBuilder.titleEntries(
-            [TitleEntity(ix: 10, title: "Abend ist es, Herr, die Stunde"), TitleEntity(ix: 4292, title: "Kanon"), TitleEntity(ix: 8358, title: "Kanon")],
+            [
+                "Abend ist es, Herr, die Stunde",
+                "Nun bitten wir den heiligen Geist",
+                "Nun bitten wir den Heiligen Geist",
+                "Nun bitten wir den Heiligen Geist",
+                "Kanon",
+                "Kanon ",
+            ],
             egSongs: eg
         )
-        #expect(entries.map(\.label) == ["Kanon", "Kanon"])
-        #expect(entries.map(\.refKey) == ["4292", "8358"])
+        // Die häufigste Schreibweise wird angezeigt, Schlüssel ist der normalisierte Titel
+        #expect(entries.map(\.label) == ["Nun bitten wir den Heiligen Geist", "Kanon"])
+        #expect(entries.map(\.refKey) == ["nun bitten wir den heiligen geist", "kanon"])
     }
 }
 

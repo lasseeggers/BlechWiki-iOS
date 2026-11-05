@@ -1,6 +1,6 @@
 # BlechWiki: API-Analyse und Architektur
 
-Stand: 03.11.2026. Grundlage sind die Beschreibung des Betreibers Dieter Kipp und Testaufrufe gegen `https://pcportal.ddns.net/RestBlechWiki1/api/`. Diese Adresse hat Dieter Kipp am 03.11.2026 für die App eingerichtet. Die frühere Adresse `RestBlechWiki` lieferte zu diesem Zeitpunkt dieselben Daten. Bis Version 0.6.1 nutzte die App die SOAP-Schnittstelle `LiteraService`. Der Betreiber hat den Umstieg auf REST empfohlen, SOAP läuft aus.
+Stand: 05.11.2026. Grundlage sind die Beschreibung des Betreibers Dieter Kipp und Testaufrufe gegen `https://pcportal.ddns.net/RestBlechWiki1/api/`. Diese Adresse hat Dieter Kipp am 03.11.2026 für die App eingerichtet. Die frühere Adresse `RestBlechWiki` lieferte zu diesem Zeitpunkt dieselben Daten. Bis Version 0.6.1 nutzte die App die SOAP-Schnittstelle `LiteraService`. Der Betreiber hat den Umstieg auf REST empfohlen, SOAP läuft aus.
 
 ## 1. Was die API kann
 
@@ -15,9 +15,9 @@ JSON über HTTPS (ASP.NET Web API auf IIS). Die Schnittstelle bietet nur GET. Ke
 
 | Tabelle | Schlüssel | Felder | Umfang bei `counter=0` |
 |---|---|---|---|
-| `Titel` | `ix` | `titel`, `titelohneKomma` | 9.915 Titel ohne Doppel (aus ca. 37.000 Einträgen), 1,2 MB. Nur `new` und `delete`. |
+| `Titel` | `ix` | `titel`, `titelohneKomma` | 9.915 Titel ohne Doppel, 1,2 MB. Nur `new` und `delete`. Die App nutzt sie nicht mehr, die Titel kommen aus den Fundstellen. |
 | `Buch` | `buchId`, Zahl als Text | `buchkurz`, `buch`, `untertitel`, `erscheinjahr`, `herausgeber`, `herausgvorname`, `verlag`, `verlagsnummer` | 755 Bücher, 257 KB |
-| `Komponist` | `AutoNr`, Zahl (bis 03.11.2026 `id`, Zahl als Text) | `kurz`, `Komponist`, `FriendlyKomponistName`, `Geboren`, `Gestorben`, `aliasvon` (bis 03.11.2026 `komponist` mit Lebensdaten in Klammern, `friendlyKomponistName`) | 2.477 Einträge zu 2.423 Nummern, 480 KB |
+| `Komponist` | `id`, Zahl als Text | `kurz`, `komponist`, `friendlyKomponistName`, `geboren`, `gestorben`, `aliasvon` | 2.477 Einträge zu 2.423 ids, 475 KB |
 
 Zählerstand am 01.11.2026: Titel 69, Buch 122, Komponist 78.
 
@@ -34,6 +34,25 @@ Zählerstand am 01.11.2026: Titel 69, Buch 122, Komponist 78.
 
 In der App und im Code heißt die Ansicht dazu „Suchergebnisse“ (iOS `SuchergebnisseView`, Android `SuchergebnisseScreen`). „Fundstelle“ bleibt der Begriff für eine Zeile aus diesen Endpunkten, auch in Datenbank, API und Repository.
 
+**Alle Fundstellen:** `Titel?titelzaehler=<N>` liefert jede Zeile mit höherem `Zähler`, bei 0 alle (am 05.11.2026 37.688 Zeilen, 7,5 MB, ohne gzip 1,1 MB wären möglich). Eingerichtet von Dieter Kipp am 04.11.2026 als Antwort auf unseren Wunsch nach stabilen IDs.
+
+| Feld | Inhalt |
+|---|---|
+| `Zähler` | fest und aufsteigend, Schlüssel der Zeile. Gleich `titelZ` in den Abfragen unten. |
+| `Quelle_kurz` | `buchkurz` des Buchs, Groß-/Kleinschreibung weicht teils ab („nordd5“ / „Nordd5“) |
+| `Seite_Nr` | Nummer im Heft (Zahl) |
+| `Titel`, `Titel2` | Titel und Zusatz wie „Vorspiel“ |
+| `EGIx` | `ix` des EG-Lieds, 0 bei anderen Stücken. Über `eg_songs` zur Melodie (`ixUr`). |
+| `Kompo_kurz`, `Kompo_kurz2` | `kurz` aus `Komponist`, eindeutig je Komponist |
+| `Vorzeich`, `Besetzung` | wie unten `vorzeichen`, `besetzung` |
+
+- Die Tabelle hat keinen Änderungsstatus. Laut Betreiber kommen fast nur neue Zeilen dazu, wenn ein Buch eingestellt wird. Eine korrigierte Zeile bekommt einen neuen Zähler. Gelöschte Zeilen erscheinen einfach nicht mehr.
+- Die Zähler bleiben laut Betreiber auch beim Wiederherstellen aus einer Sicherung und beim Serverwechsel gleich.
+- Am 04.11.2026 lieferte die Abfrage kurz nur die EG-Anhänge und privaten Sammlungen (Filter mit falschem Vorzeichen). Skript und App prüfen deshalb, ob genug Zeilen kommen.
+- Zeilen ohne Buch in der Büchertabelle (EG-Anhänge, private Sammlungen) filtert der Server seit dem 04.11.2026 heraus. Die App ignoriert sie trotzdem, sie fallen durch den Join auf `books` weg.
+
+**Einzelne Abfragen** (bis 1.3 die einzige Quelle):
+
 | Endpunkt | Schlüssel | Beispiel |
 |---|---|---|
 | `Titel/{ix}` | `ix` aus `Titel` | 10374 „Alle Augen warten auf dich, Herre“ → 2 Fundstellen |
@@ -41,7 +60,7 @@ In der App und im Code heißt die Ansicht dazu „Suchergebnisse“ (iOS `Sucher
 | `Buch/{buchId}` | `buchId` | 4035 „Bläsermusik 2025 - Württemberg“ → 76 Stücke, 17 KB |
 | `Komponist/{id}` | `id` aus `Komponist` | 2000 „Kreuter, Walter“ |
 
-Alle liefern dieselbe Zeilenstruktur: `buch, nr, titel, zus, komponist, besetzung, vorzeichen, titelZ, buchId, quellekurz`. Untertitel und Cover fehlen, die App ergänzt sie aus den Stammdaten. `titelZ` wird beim Neueinlesen der Datenbank neu vergeben und taugt nicht als Schlüssel. Fundstellen identifizieren wir weiter über `(buchId, nr, titel, zus)`.
+Alle liefern dieselbe Zeilenstruktur: `buch, nr, titel, zus, komponist, besetzung, vorzeichen, titelZ, buchId, quellekurz`. `titelZ` ist der `Zähler` von oben (als Text), bei `EG/` und `Komponist/` fehlt er. Die App nutzt nur noch `Buch/{buchId}`, um gelöschte Zeilen eines Buchs zu finden. Die Felder stimmen für Buch 4035 mit der Tabelle oben überein. Einzige Ausnahme: Ein leerer `Kompo_kurz` erscheint hier als „NN“.
 
 Die Beschreibung des Betreibers nennt für `EG/{…}` den `ix`. Sein Beispiel und unsere Tests zeigen, dass die Melodie (`ixUr`) gemeint ist.
 
@@ -49,22 +68,25 @@ Die Beschreibung des Betreibers nennt für `EG/{…}` den `ix`. Sein Beispiel un
 
 - Unbekannte IDs liefern HTTP 500 mit `{"Message":"Fehler"}`.
 - Zwei Titel kommen doppelt vor und unterscheiden sich nur durch ein Leerzeichen am Ende („Kanon“, ix 4292 und 8358). Sie haben getrennte Fundstellen, die App führt beide.
-- Komponisten: Schreibvarianten stehen als eigene Zeilen mit derselben `AutoNr` und demselben `kurz`. `aliasvon` nennt den Hauptnamen, beim Haupteintrag ist es leer. Die App speichert nur den Haupteintrag. `Geboren` und `Gestorben` sind Text, meist eine Jahreszahl, auch „um 1600“ oder „nach 1650“, leer als `""` oder `" "`.
-- Seit dem 05.11.2026 liefert `RestBlechWiki1` die Komponisten mit neuen Feldnamen. Bis Version 1.3.0 erwartet die App `id`, `komponist` und `friendlyKomponistName` und bricht ohne sie den Abgleich ab. Ab 1.3.1 liest sie beide Formate, das neue hat Vorrang. Die alten Felder (Lebensdaten dort in Formen wie `(1685-1750)`, `(1954- )`, `( - )` oder `(um 1600-nach 1650)` am Ende des Namens) sollen bleiben, bis 1.3.0 nicht mehr verbreitet ist.
+- Komponisten: Schreibvarianten stehen als eigene Zeilen mit derselben `id` und demselben `kurz`, nach allen Haupteinträgen. `aliasvon` nennt den Hauptnamen, beim Haupteintrag ist es leer. Die App speichert nur den Haupteintrag. `geboren` und `gestorben` sind Text, meist eine Jahreszahl, auch „um 1600“ oder „nach 1650“, leer als `""` oder `" "`.
+- Das Format hat sich am 05.11.2026 zweimal geändert. Bis dahin stand das Alias als `( alias … )` und die Lebensdaten in Formen wie `(1685-1750)` oder `(um 1600-nach 1650)` am Ende von `komponist`. Nachmittags hießen die Felder kurz `AutoNr`, `Komponist`, `FriendlyKomponistName`, `Geboren` und `Gestorben`, damit brach in 1.3.0 der Abgleich ab. Seit dem Abend gibt es wieder `id`, `komponist` und `friendlyKomponistName`, die Lebensdaten nur noch in `geboren` und `gestorben`. 1.3.0 und 1.3.1 laufen damit, zeigen aber keine Lebensdaten. Versionen nach 1.3.1 lesen alle drei Formate und achten bei den Feldnamen nicht auf Groß- und Kleinschreibung. Gibt es `aliasvon`, nehmen sie Lebensdaten und Alias aus den eigenen Feldern.
 - Bücher: SOAP lieferte 786. Im neuen Datenmodell fehlen 13 Pseudo-Bücher für die EG-Anhänge („EG NB“ usw.) und 18 Einträge „Einzelaus…“.
 - `EG?anhaenge=true` liefert die Teile des EG als `EGTeilkurz` und `EGTeil`, z. B. `NB` = Niedersachsen/Bremen, `M` = Mecklenburg, dazu `Stamm` und `Add`. Die App lädt die Liste beim Vollabgleich. Ist sie nicht lesbar oder leer, nimmt sie eine eingebaute Liste mit Stand 03.11.2026, damit der Abgleich nicht scheitert.
 - `Titel?search=` liefert höchstens 100 Fundstellen ohne `buchId` und wird nicht genutzt.
 - Cover-Bilder: `https://teddymuetze.ddns.net/Bilder/BilderBuch/<buchkurz>.jpg` im Original (ca. 1000 × 1444 px, ca. 200 KB), laut Betreiber zusätzlich unter `mini60/`, `mini120/` und `mini240/`. Die App nutzt `mini120` in Listen und das Original im Buchkopf, mit Rückfall auf `mini60` (`CoverUrls`).
 - Buch-Stammdaten enthalten Herausgeber, Verlag, Bestellnummer und Jahr. Seitenzahlen gibt es nicht, nur die Nummer im Heft.
-- Der Server ist ein privat betriebener DDNS-Host. Die App muss sparsam sein: keine Vollabzüge aller Fundstellen (755 Buchaufrufe).
+- Der Server ist ein privat betriebener DDNS-Host. Die App muss sparsam sein. Deshalb bringt sie die Fundstellen mit, statt sie bei jeder Installation zu laden.
 
 ## 2. Konsequenz für Suche und Caching
 
-Kernidee: **Tippen kostet keine Anfrage.** Alle Stammdaten (Titel, EG, Bücher, Komponisten) liegen nach dem ersten Start lokal in einer FTS-Datenbank. Eine Netzwerkanfrage gibt es erst, wenn der Nutzer einen Treffer öffnet, und auch dann nur einmal pro Titel.
+Kernidee: **Tippen und Öffnen kosten keine Anfrage.** Bücher, Komponisten, EG-Lieder und alle Fundstellen liegen lokal in einer Datenbank mit FTS-Index.
 
-### Stufe 1: Initial-Sync (einmalig, 4 Requests, ~2,1 MB)
+### Stufe 1: Erster Start
 
-`Version?…&counter=0` für Titel, Bücher und Komponisten, dazu `EG` → Room bzw. SQLite. Läuft beim ersten Start im Hintergrund, während die Einführung zu sehen ist (iOS `OnboardingView`, Android `OnboardingScreen`). Nach der Tour folgen zwei Schritte der Einrichtung. Der letzte schlägt Bücher fürs Inventar vor und braucht dafür die Bücher-Tabelle. Bis dahin zeigt sie den Ladestand. Die Auswahl der Landeskirche davor nimmt ohne Daten die eingebaute Liste der EG-Anhänge. Ob die Einführung erscheint, entscheidet die App einmal beim Start (`needsOnboarding`): nicht, wenn sie schon durchlaufen wurde oder schon eine Landeskirche oder Bücher eingetragen sind. Danach holt die App nur noch Änderungen, siehe [Aktualisierung](#aktualisierung).
+- Die Fundstellen bringt die App mit: `scripts/fundstellen-stand.sh` lädt `Titel?titelzaehler=0`, behält die Zeilen aus Büchern der Büchertabelle und legt sie als `data/fundstellen.json.gz` (ca. 950 KB) mit Zeitpunkt in `data/fundstellen.stand` ab. Android nimmt `data/` als Asset-Ordner (der Build entpackt die Datei, das APK speichert sie komprimiert, ca. 1 MB), iOS kopiert beide Dateien in der Build-Phase „Fundstellen-Stand“ ins App-Paket und entpackt beim Import. `data/` ist privat und wird nicht ins öffentliche Repo exportiert. Fehlt der Stand (Build aus dem öffentlichen Repo), lädt die App alle Fundstellen vom Server.
+- Ist der mitgelieferte Stand ein anderer als der zuletzt importierte (`sync_state.importedSnapshot`), ersetzt er alle Fundstellen, auch ohne Netz. So bringt jedes Update Korrekturen und Löschungen mit.
+- Danach `Version?…&counter=0` für Bücher und Komponisten, dazu `EG` und `EG?anhaenge=true` (ca. 1 MB), und `Titel?titelzaehler=<höchster Zähler des Stands>` für alles, was seit dem Stand dazugekommen ist.
+- Läuft im Hintergrund, während die Einführung zu sehen ist (iOS `OnboardingView`, Android `OnboardingScreen`). Nach der Tour folgen zwei Schritte der Einrichtung. Der letzte schlägt Bücher fürs Inventar vor und braucht dafür die Bücher-Tabelle. Bis dahin zeigt sie den Ladestand. Die Auswahl der Landeskirche davor nimmt ohne Daten die eingebaute Liste der EG-Anhänge. Ob die Einführung erscheint, entscheidet die App einmal beim Start (`needsOnboarding`): nicht, wenn sie schon durchlaufen wurde oder schon eine Landeskirche oder Bücher eingetragen sind. Danach holt die App nur noch Änderungen, siehe [Aktualisierung](#aktualisierung).
 
 ### Stufe 2: Lokale Suche
 
@@ -75,26 +97,26 @@ Room-FTS4-Tabelle über normalisierte Texte (Kleinschreibung, ä→a, ß→ss, �
 - Bücher und Komponisten in derselben Ergebnisliste, gruppiert
 - Ergebnisse ohne Netz und ohne Latenz
 
-### Stufe 3: Fundstellen lazy laden, dauerhaft speichern
+Titel-Treffer kommen aus den Fundstellen, ein Treffer je normalisiertem Titel. Schreibweisen wie „Nun bitten wir den heiligen Geist“ und „… Heiligen Geist“ werden ein Treffer, angezeigt in der häufigsten. Titel, die einem EG-Liednamen entsprechen, erscheinen nur als EG-Treffer.
 
-- Titel öffnen → `Titel/{ix}`. Ist der Titel ein EG-Lied, stattdessen `EG/{ixUr}`, weil das Titelvarianten mit abdeckt.
-- Die EG-Abfrage liefert alle Sätze zur Melodie, auch unter anderem Text. Für Bläser ist das gewollt, die Detailansicht weist darauf hin.
-- In der Suche erscheinen Titel, die einem EG-Liednamen entsprechen (1.136 von 1.255), nur als EG-Treffer.
-- Ergebnis in Room mit `fetchedAt`. Beim nächsten Öffnen sofort aus dem Cache anzeigen (stale-while-revalidate), Neuladen nur, wenn der Eintrag älter als 30 Tage ist oder neue Titel hinzugekommen sind (Änderungszähler der Titel).
-- Parallele Anfragen zum selben Schlüssel werden zusammengelegt (single flight).
+### Stufe 3: Suchergebnisse aus der lokalen Tabelle
+
+- EG-Lied: alle Fundstellen, deren `EGIx` zur selben Melodie gehört, auch unter anderem Liedtext. Für Bläser ist das gewollt, die Detailansicht weist darauf hin. Ergibt für EG 316 dieselben 218 Fundstellen wie `EG/859`.
+- Titel: alle Fundstellen mit diesem normalisierten Titel.
+- Buch: über `Quelle_kurz` = `buchkurz`, ohne Groß-/Kleinschreibung.
+- Komponist: `Kompo_kurz` oder `Kompo_kurz2` = `kurz` des Komponisten. Angezeigt wird der Name aus der Komponisten-Tabelle, fehlt der Kurzname dort (z. B. „Hassler H L“), der Kurzname.
+- Sortierung: neueste Bücher zuerst, im Buch nach Nummer.
 
 ### Stufe 4: Inventar
 
-Im Inventar stehen die Bücher aus dem Notenschrank des Chors. Eingetragen werden sie in einer Auswahlliste oder per Lesezeichen an jeder Buchkarte in den Suchergebnissen. Für jedes Buch im Inventar lädt ein WorkManager-Job `Buch/{buchId}` (ca. 20 bis 40 KB pro Buch, nacheinander). Danach:
+Im Inventar stehen die Bücher aus dem Notenschrank des Chors. Eingetragen werden sie in einer Auswahlliste oder per Lesezeichen an jeder Buchkarte in den Suchergebnissen. Ihr Inhalt liegt wie alle Fundstellen schon lokal. Damit:
 
-- zeigt die Trefferliste der Suche direkt „Im Inventar: Bläserheft 2026 Bayern Nr. 10“, ohne Server-Anfrage
+- zeigt die Trefferliste der Suche direkt „Im Inventar: Bläserheft 2026 Bayern Nr. 10“, ohne Server-Anfrage. Bei EG-Liedern zählen alle Sätze zur Melodie, bei Titeln jede Schreibweise.
 - stehen Bücher aus dem Inventar in jeder Liste von Suchergebnissen oben, mit Filter „Inventar“
 
 Die Suche selbst bleibt ohne Filter. Gefiltert wird erst auf der Ergebnisseite.
 
 Die Auswahlliste schlägt Bücher passend zur Landeskirche vor. Grundlage sind Wortanfänge in Titel, Untertitel, Herausgeber und Verlag (`RegionKeywords`). Das trifft etwa 120 der 755 Bücher, vor allem die Jahreshefte. Es ist eine Hilfe zum schnellen Finden, keine verlässliche Zuordnung.
-
-Einschränkung: „Im Inventar“ vergleicht den normalisierten Titel. Sätze, die im Heft unter einem anderen Liedtext zur selben Melodie stehen, erkennt die Suche nicht. Die Suchergebnisse eines EG-Lieds zeigen sie trotzdem.
 
 #### Inventar teilen
 
@@ -111,19 +133,42 @@ Damit nicht jedes Chormitglied den Notenschrank selbst durchgeht, lässt sich da
 
 Eine eigene Dateiendung wurde verworfen: Android wählt die App über den MIME-Typ, den der Messenger mitgibt, und der ist bei unbekannten Endungen meist `application/octet-stream`.
 
-Landeskirche und Inventar liegen in DataStore (iOS: UserDefaults der App Group), nicht in Room bzw. SQLite. Die Datenbank ist ein reiner Cache und wird bei Schema-Änderungen verworfen. Ausnahme: Ändert sich nur die Normalisierung, baut eine Migration den Suchindex und `fundstellen.titleNorm` aus den lokalen Daten neu, ohne etwas neu zu laden (iOS Schema 3→4, Android Room 5→6).
+Landeskirche und Inventar liegen in DataStore (iOS: UserDefaults der App Group), nicht in Room bzw. SQLite. Die Datenbank enthält nur, was vom Server kommt oder mitgeliefert ist, und wird bei Schema-Änderungen verworfen (zuletzt iOS Schema 5, Android Room 7). Nach einem solchen Update importiert die App den mitgelieferten Stand und lädt Bücher, Komponisten und EG neu, ca. 1 MB. Die Listen liegen deshalb in einer eigenen Datenbank, siehe unten.
+
+### Stufe 5: Listen
+
+„Favoriten“ und eigene Listen, etwa für ein Konzert. Favoriten gibt es immer (id `favoriten`), sie lassen sich weder löschen noch umbenennen. Ein Eintrag ist eine von drei Arten:
+
+- `title`: ein Lied unabhängig vom Buch. Die Liste zeigt, in wie vielen Büchern es steht und wo im Inventar.
+- `piece`: eine Fundstelle, also ein Stück in einem bestimmten Buch.
+- `eg`: ein EG-Lied. Bücher und Inventar laufen wie in der Suche über die Melodie.
+
+Jeder Eintrag hat eine eigene ID, eine Position und einen optionalen Kommentar (höchstens 300 Zeichen). Dasselbe Lied darf in einer Liste mehrfach stehen, etwa als Eingangs- und Schlusslied. In den Favoriten nicht, dort schaltet der Stern um.
+
+Gespeichert werden die Rohfelder (Titel, `buchId`, Nr., Zusatz, EG-`ix`) und zur Anzeige Buchtitel und EG-Nummer, damit ein Eintrag auch ohne Stammdaten lesbar bleibt. Zum Vergleichen (Stern, „Schon enthalten“) leitet die App daraus einen Schlüssel ab, auf beiden Plattformen gleich und mit denselben Beispielen getestet (`ListEntryKey`):
+
+- Lied: `t:` + normalisierter Titel
+- Fundstelle: `p:` + `buchId` + `|` + Nr. + `|` + normalisierter Titel + `|` + normalisierter Zusatz. Der Zähler `titelZ` taugt nicht, er ändert sich bei Korrekturen.
+- EG-Lied: `eg:` + `ix`
+
+Ändert sich die Normalisierung, rechnet eine Migration die Schlüssel aus den Rohfeldern neu. Listen teilen ist noch nicht eingebaut. Ein Code dafür würde die Rohfelder übertragen, nicht die Schlüssel, damit der Empfänger mit seiner eigenen Normalisierung vergleicht.
+
+Speicher: `listen.db` (Room, `ListsDatabase`) bzw. `listen.sqlite` (`ListsDatabase`, App Group). Beide haben echte Migrationen und werden nie verworfen. Android exportiert das Schema nach `android/core/database/schemas/`. Auf iOS darf ein Fehler beim Öffnen weder die Datei löschen noch die übrige App blockieren.
+
+Sicherung: Auf Android nehmen die Backup-Regeln (`data_extraction_rules.xml`, `backup_rules.xml`) `listen.db` und DataStore mit und lassen `blechwiki.db` weg, die mit allen Fundstellen groß ist und sich neu laden lässt. Auf iOS ist `listen.sqlite` anders als `blechwiki.sqlite` nicht vom Backup ausgenommen.
 
 ### Aktualisierung
 
-- Je Tabelle merkt sich die App den höchsten `changecounter` und fragt mit `counter=<Stand>`. Ohne Änderungen sind das drei Requests à 2 Byte.
-- Titel und Bücher übernimmt die App Eintrag für Eintrag: neu, geändert oder gelöscht. Der Suchindex des Bereichs wird danach aus der lokalen Tabelle neu gebaut.
-- Komponisten lädt die App bei jeder Änderung ganz neu (480 KB). Schreibvarianten haben dieselbe `AutoNr`, eine einzelne Änderung lässt sich nicht eindeutig einer Zeile zuordnen.
-- Die EG-Lieder haben keinen Zähler. Sie kommen beim ersten Abgleich und beim Vollabgleich, den der WLAN-Job alle 30 Tage macht.
+- Je Tabelle merkt sich die App den höchsten `changecounter` und fragt mit `counter=<Stand>`, bei den Fundstellen mit `titelzaehler=<höchster Zähler>`. Ohne Änderungen sind das drei Requests à 2 Byte.
+- Bücher übernimmt die App Eintrag für Eintrag: neu, geändert oder gelöscht. Neue Fundstellen kommen dazu, eine Korrektur als neue Zeile. Der Suchindex des Bereichs wird danach aus der lokalen Tabelle neu gebaut.
+- Gelöschte Fundstellen meldet der Server nicht. Beim Öffnen eines Buchs und für die Bücher im Inventar fragt die App höchstens alle 30 Tage `Buch/{buchId}` und löscht Zeilen dieses Buchs, deren Zähler dort als `titelZ` fehlt. Vorher holt sie neue Fundstellen, damit eine Korrektur nicht fehlt, wenn ihre alte Fassung verschwindet. Eine leere Antwort löscht nichts. Andere Seiten (EG-Lied, Titel, Komponist) holen beim Herunterziehen nur neue Fundstellen.
+- „Alle Daten neu laden“ in den Einstellungen (Mac: Menü „Darstellung“) lädt alles vom Server, auch alle Fundstellen (ca. 8,5 MB), nach einer Rückfrage. Für den Fall, dass trotzdem etwas fehlt oder falsch ist.
+- Komponisten lädt die App bei jeder Änderung ganz neu (475 KB). Schreibvarianten haben dieselbe `id`, eine einzelne Änderung lässt sich nicht eindeutig einer Zeile zuordnen.
+- Die EG-Lieder haben keinen Zähler. Sie kommen beim ersten Abgleich und beim Vollabgleich von Büchern, Komponisten und EG, den der WLAN-Job alle 30 Tage macht. Fundstellen lädt er dabei nicht ganz.
 - Prüfung beim App-Start höchstens alle 24 h. Android hat zusätzlich einen WorkManager-Job, der wöchentlich im WLAN läuft. iOS hat keinen Hintergrund-Job, dort läuft der Vollabgleich beim Öffnen im WLAN.
 - Zeilen, denen ein Pflichtfeld fehlt, überspringt die App. Der gemerkte Zähler rückt trotzdem bis zum höchsten `changecounter` der Antwort vor, auch wenn er zu einer übersprungenen Zeile gehört. Sonst käme ein einzelner fehlerhafter Eintrag bei jedem Abgleich wieder und hielte ihn auf. Als Fehler gilt eine Antwort nur, wenn eine ganze Tabelle leer oder ganz unlesbar zurückkommt oder sich in einer Liste der Änderungen nicht einmal ein Zähler lesen lässt. Dann bleibt der alte Stand.
-- Inventar-Bücher, die nicht mehr im Verzeichnis stehen (vom Server gelöscht), lädt die App nicht. Der Server beantwortet unbekannte Buch-IDs mit HTTP 500.
+- Inventar-Bücher, die nicht mehr im Verzeichnis stehen (vom Server gelöscht), gleicht die App nicht ab. Der Server beantwortet unbekannte Buch-IDs mit HTTP 500.
 - iOS liest über eine zweite, nur lesende SQLite-Verbindung. Ein laufender Abgleich, der den Suchindex schreibt, hält so keine Anzeige auf (WAL).
-- Fundstellen: 30-Tage-TTL und Pull-to-refresh auf der Detailseite.
 
 ### Gesangbuch
 
@@ -136,9 +181,9 @@ Kotlin, Jetpack Compose, Material 3, eine Activity, Unidirectional Data Flow (Vi
 | Bereich | Wahl | Begründung |
 |---|---|---|
 | Netzwerk | OkHttp + JSON-Parser von kotlinx.serialization (ohne Compiler-Plugin) | 6 GET-Endpunkte mit flachen Zeilen. Eigene DTOs mit Mapping von Hand, weil die API leere Werte als `""` liefert und Zahlen teils als Text. |
-| Persistenz | Room mit FTS4 | lokale Suche, Fundstellen-Cache, Favoriten |
+| Persistenz | Room mit FTS4 | lokale Suche, alle Fundstellen; Listen in eigener Room-Datenbank mit Migrationen |
 | Einstellungen | DataStore | Landeskirche, Sync-Zeitpunkte, Datenversion |
-| Hintergrund | WorkManager | Initial-Sync, Inventar-Download, Update-Check |
+| Hintergrund | WorkManager | Initial-Sync, Abgleich der Inventar-Bücher, Update-Check |
 | DI | Hilt | Standard, gut testbar |
 | Bilder | Coil mit Disk-Cache | Cover sind unveränderlich |
 | Navigation | Navigation Compose (typsichere Routen) | |
@@ -157,45 +202,52 @@ Die UI liegt in `:app`. Eigene Feature-Module lohnen sich erst, wenn deutlich me
 ### Datenmodell (Room)
 
 ```
-titles(ix PK, title)
-books(id PK, title, subtitle, year, editor, publisher, publisherNumber, coverUrl)
-composers(id PK, name, born, died)
+books(id PK, shortName NOCASE, title, subtitle, year, editor, publisher, publisherNumber, coverUrl)
+composers(id PK, shortName NOCASE, name, born, died)
 eg_songs(id PK auto, ix, ixUr, title, part, number, occasion)
 eg_appendices(code PK, name)
 search_index  (FTS4 über content; norm, label, detail, type, refKey, refNumber)
-sync_state(id PK = 0, titleChangeCounter, bookChangeCounter, composerChangeCounter, checkedAtMillis, fullSyncAtMillis)
-fundstellen(queryKey, position, bookId, bookTitle, bookSubtitle, number, title, titleNorm, …)  PK(queryKey, position)
-fetch_state(queryKey PK, fetchedAtMillis, titleVersion)   queryKey = "title:<ix>" | "eg:<ixUr>" | "book:<id>" | "composer:<id>"
+sync_state(id PK = 0, bookChangeCounter, composerChangeCounter, pieceCounter, checkedAtMillis, fullSyncAtMillis,
+           piecesCheckedAtMillis, importedSnapshot)
+pieces(counter PK, bookShortName NOCASE, number, title, titleNorm, addition, keySignature, egIx, scoring,
+       composerShortName NOCASE, composerShortName2 NOCASE)
+book_checks(bookId PK, checkedAtMillis)   letzter Abgleich mit Buch/{id}
 ```
 
 Auf iOS liegt dasselbe Schema in SQLite (`AppDatabase`).
+
+Listen, getrennt in `listen.db` bzw. `listen.sqlite`:
+
+```
+lists(id PK, name, createdAtMillis, updatedAtMillis)
+list_entries(id PK, listId → lists ON DELETE CASCADE, position, kind, entryKey, title,
+             bookId, bookTitle, number, addition, egIx, egIxUr, egLabel, comment, addedAtMillis)
+```
 
 ### Datenfluss Suche → Ergebnis
 
 ```
 Tastendruck ─► SearchViewModel ─► SearchRepository.search(q)  (Room FTS, kein Netz)
-Treffer antippen ─► DetailViewModel ─► FundstellenRepository.observe(key)
-                                         ├─ Room-Flow liefert Cache sofort
-                                         └─ falls fehlend/veraltet: BlechWikiApi ─► Room upsert ─► Flow emittiert neu
+Treffer antippen ─► SuchergebnisseViewModel ─► FundstellenRepository.observe(query)  (Join pieces/books/composers, kein Netz)
+                                              └─ Buch, Abgleich älter als 30 Tage: Buch/{id} ─► gelöschte Zeilen weg ─► Flow emittiert neu
 ```
 
 ## 4. Bedienung
 
-- Startseite = Suchfeld, darunter Inventar, Gesangbuch, Landeskirche und App-Informationen.
+- Startseite = Suchfeld, darunter Inventar, Listen, Gesangbuch, Einstellungen und Hilfe. „Hilfe“ öffnet die Einführung über der ganzen App, ist also keine Seite rechts daneben.
 - Ergebnisse erscheinen beim Tippen, gruppiert: EG-Lied, Titel, Buch, Komponist.
 - Detailseite „Suchergebnisse“: Fundstellen gruppiert nach Buch, eigene Bücher oben und markiert, Chips für Besetzung (2+2, 3+3 …) und für „nur Inventar“. Das Vorzeichen steht an jeder Fundstelle.
-- Offline-Hinweis nur dann, wenn eine Fundstelle wirklich nicht im Cache ist.
-- Die Landeskirche wählt man auf der Startseite. Bis dahin zeigt das Gesangbuch nur den Stammteil.
+- Die Landeskirche wählt man in den Einstellungen, in der Einführung oder über den Hinweis in Inventar und Gesangbuch. Bis dahin zeigt das Gesangbuch nur den Stammteil.
 - iOS auf iPad, Mac (Mac Catalyst) und aufgeklapptem iPhone Duo: Suche und Startseite links, die gewählte Seite rechts (`NavigationSplitView`). Auf schmalen Bildschirmen klappt das zum selben Stapel zusammen wie auf dem iPhone. Listen rechts werden ab 720 pt Spaltenbreite mittig begrenzt.
-- Nur auf dem Mac: Jeder Befehl steht auch in der Menüleiste („Gehe zu“, „Inventar“, „Aktualisieren“ unter „Darstellung“, Impressum und Datenschutz unter „Hilfe“), die Seiten melden ihre Befehle per `focusedSceneValue`. ⌘, öffnet ein Einstellungsfenster mit der Landeskirche. Die Besetzung wählt man im Aufklappmenü statt in einer seitlich scrollenden Chip-Reihe, Buchzeilen haben ein Kontextmenü. Catalyst zeigt `.principal` in der Toolbar nicht, Unterzeilen stehen dort in der Liste. Überschriften in Inventar und Gesangbuch scrollen mit, statt oben stehen zu bleiben, weil ihr Hintergrund unter Catalyst nach dem Zurückscrollen über dem Listenanfang liegen blieb. Den aktuellen Anlass im Gesangbuch zeigt dort der Anlass-Knopf in der Toolbar. Die Menübefehle erscheinen auch auf dem iPad mit Tastatur.
+- Nur auf dem Mac: Jeder Befehl steht auch in der Menüleiste („Gehe zu“, „Inventar“, „Aktualisieren“ unter „Darstellung“, Einführung, Impressum und Datenschutz unter „Hilfe“), die Seiten melden ihre Befehle per `focusedSceneValue`. ⌘, öffnet ein Einstellungsfenster mit der Landeskirche. Die Besetzung wählt man im Aufklappmenü statt in einer seitlich scrollenden Chip-Reihe, Buchzeilen haben ein Kontextmenü. Catalyst zeigt `.principal` in der Toolbar nicht, Unterzeilen stehen dort in der Liste. Überschriften in Inventar und Gesangbuch scrollen mit, statt oben stehen zu bleiben, weil ihr Hintergrund unter Catalyst nach dem Zurückscrollen über dem Listenanfang liegen blieb. Den aktuellen Anlass im Gesangbuch zeigt dort der Anlass-Knopf in der Toolbar. Die Menübefehle erscheinen auch auf dem iPad mit Tastatur.
 - Android ab 600 dp Fensterbreite (aufgeklapptes Foldable, Tablet, Handy quer) genauso: Suche links, Seite rechts, Seite höchstens 840 dp breit. Beide Formen teilen sich einen `NavHost`, beim Auf- und Zuklappen bleibt die geöffnete Seite stehen.
 
 ## 5. Offene Punkte
 
-- Wünsche an den Betreiber, Stand 03.11.2026:
-  - Erledigt: nur GET, feste Adresse mit Version (`RestBlechWiki1`), Endpunkt für die EG-Teile, Lebensdaten und Schreibvarianten der Komponisten als eigene Felder (05.11.2026).
-  - Zurückgestellt: gzip. Der Betreiber schaltet es ein, wenn Bedarf erkennbar ist.
+- Wünsche an den Betreiber, Stand 05.11.2026:
+  - Erledigt: nur GET, feste Adresse mit Version (`RestBlechWiki1`), Endpunkt für die EG-Teile, Lebensdaten und Schreibvarianten der Komponisten als eigene Felder (05.11.2026), alle Fundstellen mit festen IDs (`Titel?titelzaehler=`, 04.11.2026).
+  - Nicht möglich: gzip (der Betreiber bekommt es nicht eingerichtet) und ein Änderungsstatus für Fundstellen. Deshalb Stand in der App und Abgleich pro Buch.
   - Gestrichen: alle Zählerstände in einem Aufruf (spart nur zwei Anfragen mit je 2 Byte Antwort) und ein neuer Zähler für ein Buch, wenn sich seine Fundstellen ändern. Der Bestand ändert sich bis auf Korrekturen kaum, das Neuladen nach 30 Tagen reicht.
-  - Offen: stabile IDs (`ix`, `ixUr`, Komponisten) in den Fundstellen, `ixUr` in der Titeltabelle und HTTP 404 bei unbekannter ID. Mit `ixUr` in den Fundstellen fiele die Einschränkung unter „Stufe 4“ weg.
-  - Offen: Bleibt `RestBlechWiki` für bestehende Installationen erreichbar, und wie lange?
-- Klären, ob ein Initial-Download von ~2,1 MB pro Installation für den Betreiber in Ordnung ist, oder ob wir ein vorgebautes Datenbank-Asset in die APK legen (`createFromAsset`) und nur Deltas laden. Letzteres entlastet den Server und macht die App ab der ersten Sekunde nutzbar. Ich würde das so machen.
+  - Offen: HTTP 404 bei unbekannter ID.
+  - `RestBlechWiki` bleibt laut Betreiber vorerst erreichbar, für Installationen bis 1.0.
+- Komponisten: Die Schreibvarianten (`aliasvon`) könnten in die Suche, damit „Lassus“ Orlando di Lasso findet. Bisher speichert die App nur den Haupteintrag.

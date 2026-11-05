@@ -176,6 +176,32 @@ struct BookmarkToggle: View {
     }
 }
 
+/// "Im Inventar: Bläserheft 2022 Bayern Nr. 43, 44 und 2 weitere Bücher", in Suchtreffern und Listen.
+struct OwnedLine: View {
+    let locations: [OwnedLocation]
+
+    var body: some View {
+        // Mehrere Sätze im selben Heft (Vorspiel, Satz, Zwischenspiel) sind ein Buch, nicht mehrere Treffer
+        let byBook = groupedInOrder(locations, by: \.bookTitle)
+        let first = byBook[0]
+        var seen = Set<String>()
+        let numbers = first.map(\.number).filter { seen.insert($0).inserted }.joined(separator: ", ")
+        let more = switch byBook.count - 1 {
+        case 0: ""
+        case 1: " und 1 weiteres Buch"
+        case let n: " und \(n) weitere Bücher"
+        }
+        return Label {
+            Text("Im Inventar: \(first[0].bookTitle) Nr. \(numbers)\(more)").lineLimit(2)
+        } icon: {
+            Image(systemName: "bookmark.fill").imageScale(.small)
+        }
+        .font(.subheadline)
+        .brandForeground()
+        .labelStyle(.titleAndIcon)
+    }
+}
+
 /// Cover in Listengröße. Geladen wird die schärfere mittlere Größe, bei Fehler die API-Variante.
 struct BookCover: View {
     let url: String?

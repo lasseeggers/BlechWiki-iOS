@@ -110,6 +110,7 @@
 				BB0000000000000000000061 /* Sources */,
 				BB0000000000000000000040 /* Frameworks */,
 				BB0000000000000000000062 /* Resources */,
+				BB0000000000000000000116 /* Fundstellen-Stand */,
 				BB0000000000000000000114 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
@@ -209,6 +210,24 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		BB0000000000000000000116 /* Fundstellen-Stand */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Fundstellen-Stand";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Mitgelieferter Stand der Fundstellen aus scripts/fundstellen-stand.sh. Im öffentlichen Repo\n# fehlt data/, die App lädt die Fundstellen dann beim ersten Start vom Server. Deshalb ohne\n# Skript-Sandbox: Sie verlangt feste Eingabedateien, und eine fehlende bräche den Build ab.\nSRC=\"${SRCROOT}/../data\"\nif [ -f \"$SRC/fundstellen.json.gz\" ] && [ -f \"$SRC/fundstellen.stand\" ]; then\n  cp \"$SRC/fundstellen.json.gz\" \"$SRC/fundstellen.stand\" \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/\"\nelse\n  echo \"warning: data/fundstellen.json.gz fehlt, die App lädt alle Fundstellen beim ersten Start\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		BB0000000000000000000061 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -247,6 +266,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = SQH36C5KAU;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = BlechWiki;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -261,7 +281,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3.1;
+				MARKETING_VERSION = 1.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blechwiki.eggers.media;
 				PRODUCT_MODULE_NAME = BetterBlechWiki;
 				PRODUCT_NAME = BlechWiki;
@@ -289,6 +309,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = SQH36C5KAU;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = BlechWiki;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -303,7 +324,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3.1;
+				MARKETING_VERSION = 1.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blechwiki.eggers.media;
 				PRODUCT_MODULE_NAME = BetterBlechWiki;
 				PRODUCT_NAME = BlechWiki;
@@ -385,7 +406,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.3.1;
+				MARKETING_VERSION = 1.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blechwiki.eggers.media.share;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -416,7 +437,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.3.1;
+				MARKETING_VERSION = 1.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blechwiki.eggers.media.share;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

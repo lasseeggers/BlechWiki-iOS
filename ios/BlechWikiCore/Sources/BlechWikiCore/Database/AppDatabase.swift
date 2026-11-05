@@ -1,10 +1,9 @@
 import Foundation
 import SQLite3
 
-/// Lokale Datenbank. Enthält nur Daten, die sich jederzeit neu vom Server laden lassen.
-/// Deshalb bei Schemawechsel Neuaufbau statt Migration, wie bei der Android-App. Ein Neuaufbau
-/// verwirft auch den Fundstellen-Cache der Inventar-Bücher, und jedes Gerät lädt sie nach dem
-/// Update neu. Fehlt künftig nur eine Spalte, besser per `ALTER TABLE` ergänzen.
+/// Lokale Datenbank. Enthält nur Daten, die sich jederzeit neu vom Server laden lassen oder in
+/// der App mitgeliefert sind (Fundstellen). Deshalb bei Schemawechsel Neuaufbau statt Migration,
+/// wie bei der Android-App. Inventar und Landeskirche liegen in den Einstellungen und bleiben.
 ///
 /// Threadsicher: Schreiben und Lesen haben je eine Verbindung unter eigener Sperre. Die Abfragen
 /// sind klein (Millisekunden), nur der Stammdaten-Abgleich schreibt größere Mengen und hält die
@@ -12,7 +11,7 @@ import SQLite3
 /// den alten Stand, statt zu warten.
 public final class AppDatabase: @unchecked Sendable {
 
-    private static let schemaVersion = 4
+    private static let schemaVersion = 5
 
     private let lock = NSLock()
     private let connection: SQLiteConnection
@@ -33,18 +32,14 @@ public final class AppDatabase: @unchecked Sendable {
         let connection = try SQLiteConnection(path: url?.path)
         try connection.execute("PRAGMA journal_mode = WAL")
         // Version 3: REST statt SOAP, neue Schlüssel für Titel, Bücher und Komponisten
-        // Version 4: neue Normalisierung (ø, æ, Ligaturen). Von 3 aus nur Suchindex neu, ohne Download
+        // Version 4: neue Normalisierung (ø, æ, Ligaturen)
+        // Version 5: alle Fundstellen lokal statt Cache pro Abfrage, ohne Titel-Tabelle. Nach dem
+        // Update kommen Bücher, Komponisten und EG neu (ca. 1 MB), die Fundstellen aus der App.
         if try connection.userVersion() != Self.schemaVersion {
             // App und Share Extension öffnen nach einem Update womöglich gleichzeitig. Die
             // Transaktion lässt die zweite warten, danach findet sie das neue Schema vor.
             try connection.transaction {
-                switch try connection.userVersion() {
-                case Self.schemaVersion: break
-                case 3:
-                    try SearchIndexBuilder.rebuild(connection)
-                    try connection.setUserVersion(Self.schemaVersion)
-                default: try Self.recreateSchema(connection)
-                }
+                if try connection.userVersion() != Self.schemaVersion { try Self.recreateSchema(connection) }
             }
         }
         // Erst nach einem Neuaufbau öffnen, sonst verwiese ihr Statement-Cache auf alte Tabellen
@@ -72,11 +67,13 @@ public final class AppDatabase: @unchecked Sendable {
         let existing = try connection.rows("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'search_index_%'") { $0.text(0) }
         for table in existing { try connection.execute("DROP TABLE IF EXISTS \"\(table)\"") }
         try connection.execute("""
-            CREATE TABLE titles (ix INTEGER PRIMARY KEY NOT NULL, title TEXT NOT NULL);
             CREATE TABLE books (
-                id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, subtitle TEXT, year INTEGER,
-                editor TEXT, publisher TEXT, publisherNumber TEXT, coverUrl TEXT);
-            CREATE TABLE composers (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, born TEXT, died TEXT);
+                id TEXT PRIMARY KEY NOT NULL, shortName TEXT NOT NULL COLLATE NOCASE, title TEXT NOT NULL,
+                subtitle TEXT, year INTEGER, editor TEXT, publisher TEXT, publisherNumber TEXT, coverUrl TEXT);
+            CREATE INDEX books_shortName ON books(shortName);
+            CREATE TABLE composers (
+                id TEXT PRIMARY KEY NOT NULL, shortName TEXT COLLATE NOCASE, name TEXT NOT NULL, born TEXT, died TEXT);
+            CREATE INDEX composers_shortName ON composers(shortName);
             CREATE TABLE eg_songs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, ix INTEGER NOT NULL, ixUr INTEGER NOT NULL,
                 title TEXT NOT NULL, part TEXT NOT NULL, number INTEGER NOT NULL, occasion TEXT);
@@ -88,15 +85,20 @@ public final class AppDatabase: @unchecked Sendable {
                 notindexed=norm, notindexed=label, notindexed=detail, notindexed=type,
                 notindexed=refKey, notindexed=refNumber);
             CREATE TABLE sync_state (
-                id INTEGER PRIMARY KEY NOT NULL, titleChangeCounter INTEGER, bookChangeCounter INTEGER,
-                composerChangeCounter INTEGER, checkedAtMillis INTEGER NOT NULL, fullSyncAtMillis INTEGER);
-            CREATE TABLE fundstellen (
-                queryKey TEXT NOT NULL, position INTEGER NOT NULL, bookId TEXT NOT NULL,
-                bookTitle TEXT NOT NULL, bookSubtitle TEXT, number TEXT NOT NULL, title TEXT NOT NULL,
-                titleNorm TEXT NOT NULL, addition TEXT, composer TEXT, scoring TEXT, keySignature TEXT,
-                coverUrl TEXT, PRIMARY KEY (queryKey, position));
-            CREATE INDEX fundstellen_titleNorm ON fundstellen(titleNorm);
-            CREATE TABLE fetch_state (queryKey TEXT PRIMARY KEY NOT NULL, fetchedAtMillis INTEGER NOT NULL, titleVersion INTEGER);
+                id INTEGER PRIMARY KEY NOT NULL, bookChangeCounter INTEGER, composerChangeCounter INTEGER,
+                pieceCounter INTEGER, checkedAtMillis INTEGER NOT NULL, fullSyncAtMillis INTEGER,
+                piecesCheckedAtMillis INTEGER, importedSnapshot TEXT);
+            CREATE TABLE pieces (
+                counter INTEGER PRIMARY KEY NOT NULL, bookShortName TEXT NOT NULL COLLATE NOCASE,
+                number TEXT NOT NULL, title TEXT NOT NULL, titleNorm TEXT NOT NULL, addition TEXT,
+                keySignature TEXT, egIx INTEGER, scoring TEXT, composerShortName TEXT COLLATE NOCASE,
+                composerShortName2 TEXT COLLATE NOCASE);
+            CREATE INDEX pieces_bookShortName ON pieces(bookShortName);
+            CREATE INDEX pieces_titleNorm ON pieces(titleNorm);
+            CREATE INDEX pieces_egIx ON pieces(egIx);
+            CREATE INDEX pieces_composerShortName ON pieces(composerShortName);
+            CREATE INDEX pieces_composerShortName2 ON pieces(composerShortName2);
+            CREATE TABLE book_checks (bookId TEXT PRIMARY KEY NOT NULL, checkedAtMillis INTEGER NOT NULL);
             """)
         connection.clearStatementCache()
         try connection.setUserVersion(Self.schemaVersion)
@@ -207,12 +209,12 @@ extension AppDatabase {
 
     func books() throws -> [BookEntity] {
         try read { db in
-            try db.rows("SELECT * FROM books ORDER BY year IS NULL, year DESC, title", map: Self.book)
+            try db.rows("SELECT \(Self.bookColumns) FROM books ORDER BY year IS NULL, year DESC, title", map: Self.book)
         }
     }
 
     func book(id: String) throws -> BookEntity? {
-        try read { db in try db.rows("SELECT * FROM books WHERE id = ?", [.text(id)], map: Self.book).first }
+        try read { db in try db.rows("SELECT \(Self.bookColumns) FROM books WHERE id = ?", [.text(id)], map: Self.book).first }
     }
 
     func bookIds() throws -> [String] {
@@ -222,23 +224,21 @@ extension AppDatabase {
     func books(ids: [String]) throws -> [BookEntity] {
         if ids.isEmpty { return [] }
         return try read { db in
-            try db.rows("/*dyn*/ SELECT * FROM books WHERE id IN (\(placeholders(ids.count)))", ids.map { .text($0) }, map: Self.book)
+            try db.rows("/*dyn*/ SELECT \(Self.bookColumns) FROM books WHERE id IN (\(placeholders(ids.count)))", ids.map { .text($0) }, map: Self.book)
         }
-    }
-
-    func titles() throws -> [TitleEntity] {
-        try read { db in try db.rows("SELECT ix, title FROM titles") { TitleEntity(ix: $0.int(0), title: $0.text(1)) } }
     }
 
     func allEgSongs() throws -> [EgSongEntity] {
         try read { db in try db.rows("SELECT ix, ixUr, title, part, number, occasion FROM eg_songs", map: Self.egSong) }
     }
 
+    private static let bookColumns = "id, shortName, title, subtitle, year, editor, publisher, publisherNumber, coverUrl"
+
     private static func book(_ row: SQLiteConnection.Row) -> BookEntity {
         BookEntity(
-            id: row.text(0), title: row.text(1), subtitle: row.textOrNil(2), year: row.intOrNil(3),
-            editor: row.textOrNil(4), publisher: row.textOrNil(5), publisherNumber: row.textOrNil(6),
-            coverUrl: row.textOrNil(7)
+            id: row.text(0), shortName: row.text(1), title: row.text(2), subtitle: row.textOrNil(3), year: row.intOrNil(4),
+            editor: row.textOrNil(5), publisher: row.textOrNil(6), publisherNumber: row.textOrNil(7),
+            coverUrl: row.textOrNil(8)
         )
     }
 
@@ -246,10 +246,10 @@ extension AppDatabase {
         if names.isEmpty { return [] }
         return try read { db in
             try db.rows(
-                "/*dyn*/ SELECT id, name, born, died FROM composers WHERE name IN (\(placeholders(names.count)))",
+                "/*dyn*/ SELECT id, shortName, name, born, died FROM composers WHERE name IN (\(placeholders(names.count)))",
                 names.map { .text($0) }
             ) {
-                ComposerEntity(id: $0.text(0), name: $0.text(1), born: $0.textOrNil(2), died: $0.textOrNil(3))
+                ComposerEntity(id: $0.text(0), shortName: $0.textOrNil(1), name: $0.text(2), born: $0.textOrNil(3), died: $0.textOrNil(4))
             }
         }
     }
@@ -291,27 +291,28 @@ extension AppDatabase {
 
     func syncState() throws -> SyncState? {
         try read { db in
-            try db.rows("""
-                SELECT titleChangeCounter, bookChangeCounter, composerChangeCounter, checkedAtMillis, fullSyncAtMillis
-                FROM sync_state WHERE id = 0
-                """) {
-                SyncState(
-                    titleChangeCounter: $0.intOrNil(0), bookChangeCounter: $0.intOrNil(1), composerChangeCounter: $0.intOrNil(2),
-                    checkedAtMillis: $0.int(3), fullSyncAtMillis: $0.intOrNil(4)
-                )
-            }.first
+            try Self.syncState(db)
         }
     }
 
-    static func deleteTitles(_ db: SQLiteConnection, ixs: [Int]? = nil) throws {
-        guard let ixs else { return try db.run("DELETE FROM titles") }
-        for ix in ixs { try db.run("DELETE FROM titles WHERE ix = ?", [.int(ix)]) }
+    /// Wie `syncState()`, aber über die Verbindung einer laufenden Schreibtransaktion.
+    static func syncState(_ db: SQLiteConnection) throws -> SyncState? {
+        try db.rows("""
+            SELECT bookChangeCounter, composerChangeCounter, pieceCounter, checkedAtMillis, fullSyncAtMillis,
+                   piecesCheckedAtMillis, importedSnapshot
+            FROM sync_state WHERE id = 0
+            """) {
+            SyncState(
+                bookChangeCounter: $0.intOrNil(0), composerChangeCounter: $0.intOrNil(1), pieceCounter: $0.intOrNil(2),
+                checkedAtMillis: $0.int(3), fullSyncAtMillis: $0.intOrNil(4), piecesCheckedAtMillis: $0.intOrNil(5),
+                importedSnapshot: $0.textOrNil(6)
+            )
+        }.first
     }
 
-    static func upsertTitles(_ db: SQLiteConnection, _ titles: [TitleEntity]) throws {
-        for t in titles {
-            try db.run("INSERT OR REPLACE INTO titles (ix, title) VALUES (?, ?)", [.int(t.ix), .text(t.title)])
-        }
+    /// Wie `allEgSongs()`, aber über die Verbindung einer laufenden Schreibtransaktion.
+    static func allEgSongs(_ db: SQLiteConnection) throws -> [EgSongEntity] {
+        try db.rows("SELECT ix, ixUr, title, part, number, occasion FROM eg_songs", map: Self.egSong)
     }
 
     static func deleteBooks(_ db: SQLiteConnection, ids: [String]? = nil) throws {
@@ -322,8 +323,8 @@ extension AppDatabase {
     static func upsertBooks(_ db: SQLiteConnection, _ books: [BookEntity]) throws {
         for b in books {
             try db.run(
-                "INSERT OR REPLACE INTO books (id, title, subtitle, year, editor, publisher, publisherNumber, coverUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                [.text(b.id), .text(b.title), SQLValue(b.subtitle), SQLValue(b.year), SQLValue(b.editor),
+                "INSERT OR REPLACE INTO books (\(bookColumns)) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [.text(b.id), .text(b.shortName), .text(b.title), SQLValue(b.subtitle), SQLValue(b.year), SQLValue(b.editor),
                  SQLValue(b.publisher), SQLValue(b.publisherNumber), SQLValue(b.coverUrl)]
             )
         }
@@ -333,8 +334,8 @@ extension AppDatabase {
         try db.run("DELETE FROM composers")
         for c in composers {
             try db.run(
-                "INSERT OR REPLACE INTO composers (id, name, born, died) VALUES (?, ?, ?, ?)",
-                [.text(c.id), .text(c.name), SQLValue(c.born), SQLValue(c.died)]
+                "INSERT OR REPLACE INTO composers (id, shortName, name, born, died) VALUES (?, ?, ?, ?, ?)",
+                [.text(c.id), SQLValue(c.shortName), .text(c.name), SQLValue(c.born), SQLValue(c.died)]
             )
         }
     }
@@ -359,12 +360,12 @@ extension AppDatabase {
     static func upsertSyncState(_ db: SQLiteConnection, _ s: SyncState) throws {
         try db.run(
             """
-            INSERT OR REPLACE INTO sync_state (id, titleChangeCounter, bookChangeCounter, composerChangeCounter,
-                                               checkedAtMillis, fullSyncAtMillis)
-            VALUES (0, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO sync_state (id, bookChangeCounter, composerChangeCounter, pieceCounter,
+                                               checkedAtMillis, fullSyncAtMillis, piecesCheckedAtMillis, importedSnapshot)
+            VALUES (0, ?, ?, ?, ?, ?, ?, ?)
             """,
-            [SQLValue(s.titleChangeCounter), SQLValue(s.bookChangeCounter), SQLValue(s.composerChangeCounter),
-             .int(s.checkedAtMillis), SQLValue(s.fullSyncAtMillis)]
+            [SQLValue(s.bookChangeCounter), SQLValue(s.composerChangeCounter), SQLValue(s.pieceCounter),
+             .int(s.checkedAtMillis), SQLValue(s.fullSyncAtMillis), SQLValue(s.piecesCheckedAtMillis), SQLValue(s.importedSnapshot)]
         )
     }
 }
@@ -373,73 +374,157 @@ extension AppDatabase {
 
 extension AppDatabase {
 
-    func fundstellen(queryKey: String) throws -> [FundstelleEntity] {
-        try read { db in
-            try db.rows("SELECT * FROM fundstellen WHERE queryKey = ? ORDER BY position", [.text(queryKey)], map: Self.fundstelle)
+    /// Fundstellen ohne Buch im Verzeichnis (EG-Anhänge, private Sammlungen) fallen durch den Join weg.
+    private static let pieceSelect = """
+        SELECT p.counter, b.id, b.title, b.subtitle, b.coverUrl, p.number, p.title, p.addition, p.keySignature,
+               p.scoring, p.composerShortName, p.composerShortName2, c1.name, c2.name
+        FROM pieces p
+        JOIN books b ON b.shortName = p.bookShortName
+        LEFT JOIN composers c1 ON c1.shortName = p.composerShortName
+        LEFT JOIN composers c2 ON c2.shortName = p.composerShortName2
+        """
+
+    /// Neueste Bücher zuerst, im Buch nach Nummer ("4", "12", "12a").
+    private static let pieceOrder = """
+        ORDER BY b.year IS NULL, b.year DESC, b.title, b.id, CAST(p.number AS INTEGER), p.number, p.counter
+        """
+
+    func pieces(_ query: FundstellenQuery) throws -> [PieceRow] {
+        let (filter, args): (String, [SQLValue]) = switch query {
+        case .byBook(let id): ("b.id = ?", [.text(id)])
+        // Alle Sätze zur Melodie, auch unter anderem Liedtext
+        case .byEgMelody(let ixUr): ("p.egIx IN (SELECT ix FROM eg_songs WHERE ixUr = ?)", [.int(ixUr)])
+        case .byTitle(let titleNorm): ("p.titleNorm = ?", [.text(titleNorm)])
+        // Als erster oder zweiter Komponist
+        case .byComposer(let id):
+            ("""
+             p.composerShortName IN (SELECT shortName FROM composers WHERE id = ?)
+             OR p.composerShortName2 IN (SELECT shortName FROM composers WHERE id = ?)
+             """, [.text(id), .text(id)])
+        }
+        return try read { db in
+            try db.rows("\(Self.pieceSelect) WHERE \(filter) \(Self.pieceOrder)", args, map: Self.pieceRow)
         }
     }
 
-    func fetchState(queryKey: String) throws -> FetchState? {
+    /// Stücke mit der Nummer `number` im Buch `bookId`, für Fundstellen in Listen. Vergleicht ohne
+    /// Leerraum am Rand, wie der Schlüssel der Liste (`ListEntryKey`).
+    func pieces(bookId: String, number: String) throws -> [PieceRow] {
         try read { db in
-            try db.rows("SELECT queryKey, fetchedAtMillis, titleVersion FROM fetch_state WHERE queryKey = ?", [.text(queryKey)]) {
-                FetchState(queryKey: $0.text(0), fetchedAtMillis: $0.int(1), titleVersion: $0.intOrNil(2))
-            }.first
+            try db.rows("\(Self.pieceSelect) WHERE b.id = ? AND TRIM(p.number) = ? \(Self.pieceOrder)",
+                        [.text(bookId), .text(number.trimmingCharacters(in: .whitespaces))], map: Self.pieceRow)
         }
     }
 
-    /// Fundstellen aus den Abfragen `queryKeys` (z. B. "book:…"), deren normalisierter Titel in `titleNorms` liegt.
-    func ownedHits(queryKeys: [String], titleNorms: [String]) throws -> [OwnedHit] {
-        if queryKeys.isEmpty || titleNorms.isEmpty { return [] }
+    private static func pieceRow(_ row: SQLiteConnection.Row) -> PieceRow {
+        PieceRow(
+            counter: row.int(0), bookId: row.text(1), bookTitle: row.text(2), bookSubtitle: row.textOrNil(3),
+            coverUrl: row.textOrNil(4), number: row.text(5), title: row.text(6), addition: row.textOrNil(7),
+            keySignature: row.textOrNil(8), scoring: row.textOrNil(9), composerShortName: row.textOrNil(10),
+            composerShortName2: row.textOrNil(11), composerName: row.textOrNil(12), composerName2: row.textOrNil(13)
+        )
+    }
+
+    /// Zahl der Bücher im Verzeichnis je normalisiertem Titel, für „In 7 Büchern“ in Listen.
+    func bookCounts(titleNorms: [String]) throws -> [String: Int] {
+        if titleNorms.isEmpty { return [:] }
+        return try read { db in
+            let rows = try db.rows("""
+                /*dyn*/ SELECT p.titleNorm, COUNT(DISTINCT b.id) FROM pieces p
+                JOIN books b ON b.shortName = p.bookShortName
+                WHERE p.titleNorm IN (\(placeholders(titleNorms.count)))
+                GROUP BY p.titleNorm
+                """,
+                titleNorms.map { .text($0) }
+            ) { ($0.text(0), $0.int(1)) }
+            return Dictionary(rows, uniquingKeysWith: { first, _ in first })
+        }
+    }
+
+    /// Stücke mit einem der `titleNorms` in den Büchern `bookIds`.
+    func ownedHits(bookIds: [String], titleNorms: [String]) throws -> [OwnedHit] {
+        if bookIds.isEmpty || titleNorms.isEmpty { return [] }
         return try read { db in
             try db.rows("""
-                /*dyn*/ SELECT titleNorm, bookId, bookTitle, number FROM fundstellen
-                WHERE queryKey IN (\(placeholders(queryKeys.count))) AND titleNorm IN (\(placeholders(titleNorms.count)))
-                ORDER BY bookTitle, position
+                /*dyn*/ SELECT p.titleNorm, b.id, b.title, p.number FROM pieces p
+                JOIN books b ON b.shortName = p.bookShortName
+                WHERE b.id IN (\(placeholders(bookIds.count))) AND p.titleNorm IN (\(placeholders(titleNorms.count)))
+                ORDER BY b.title, CAST(p.number AS INTEGER), p.number
                 """,
-                queryKeys.map { .text($0) } + titleNorms.map { .text($0) }
+                bookIds.map { .text($0) } + titleNorms.map { .text($0) }
             ) {
                 OwnedHit(titleNorm: $0.text(0), bookId: $0.text(1), bookTitle: $0.text(2), number: $0.text(3))
             }
         }
     }
 
-    /// Welche der `queryKeys` schon einmal erfolgreich geladen wurden.
-    func fetchedKeys(_ queryKeys: [String]) throws -> [String] {
-        if queryKeys.isEmpty { return [] }
+    /// Sätze zu den Melodien `ixUrs` in den Büchern `bookIds`.
+    func ownedMelodyHits(bookIds: [String], ixUrs: [Int]) throws -> [OwnedMelodyHit] {
+        if bookIds.isEmpty || ixUrs.isEmpty { return [] }
         return try read { db in
-            try db.rows(
-                "/*dyn*/ SELECT queryKey FROM fetch_state WHERE queryKey IN (\(placeholders(queryKeys.count)))",
-                queryKeys.map { .text($0) }
-            ) { $0.text(0) }
+            try db.rows("""
+                /*dyn*/ SELECT e.ixUr, b.id, b.title, p.number FROM pieces p
+                JOIN books b ON b.shortName = p.bookShortName
+                JOIN (SELECT DISTINCT ix, ixUr FROM eg_songs) e ON e.ix = p.egIx
+                WHERE b.id IN (\(placeholders(bookIds.count))) AND e.ixUr IN (\(placeholders(ixUrs.count)))
+                ORDER BY b.title, CAST(p.number AS INTEGER), p.number
+                """,
+                bookIds.map { .text($0) } + ixUrs.map { .int($0) }
+            ) {
+                OwnedMelodyHit(ixUr: $0.int(0), bookId: $0.text(1), bookTitle: $0.text(2), number: $0.text(3))
+            }
         }
     }
 
-    static func replaceFundstellen(_ db: SQLiteConnection, queryKey: String, _ items: [FundstelleEntity], state: FetchState) throws {
-        try db.run("DELETE FROM fundstellen WHERE queryKey = ?", [.text(queryKey)])
-        for f in items {
+    func countersOfBook(_ bookId: String) throws -> [Int] {
+        try read { db in
+            try db.rows(
+                "SELECT p.counter FROM pieces p JOIN books b ON b.shortName = p.bookShortName WHERE b.id = ?",
+                [.text(bookId)]
+            ) { $0.int(0) }
+        }
+    }
+
+    func bookCheckedAtMillis(_ bookId: String) throws -> Int? {
+        try read { db in
+            try db.rows("SELECT checkedAtMillis FROM book_checks WHERE bookId = ?", [.text(bookId)]) { $0.int(0) }.first
+        }
+    }
+
+    /// Titel aller Fundstellen in Büchern des Verzeichnisses, mit Doppeln, für den Suchindex.
+    static func pieceTitles(_ db: SQLiteConnection) throws -> [String] {
+        try db.rows("SELECT p.title FROM pieces p JOIN books b ON b.shortName = p.bookShortName") { $0.text(0) }
+    }
+
+    static func deleteAllPieces(_ db: SQLiteConnection) throws {
+        try db.run("DELETE FROM pieces")
+    }
+
+    static func deletePieces(_ db: SQLiteConnection, counters: [Int]) throws {
+        for counter in counters { try db.run("DELETE FROM pieces WHERE counter = ?", [.int(counter)]) }
+    }
+
+    /// Korrigierte Zeilen bekommen einen neuen Zähler, ersetzt wird nur bei gleichem Zähler.
+    static func upsertPieces(_ db: SQLiteConnection, _ pieces: [PieceEntity]) throws {
+        for p in pieces {
             try db.run(
                 """
-                INSERT INTO fundstellen (queryKey, position, bookId, bookTitle, bookSubtitle, number, title, titleNorm,
-                                         addition, composer, scoring, keySignature, coverUrl)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO pieces (counter, bookShortName, number, title, titleNorm, addition, keySignature,
+                                               egIx, scoring, composerShortName, composerShortName2)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                [.text(f.queryKey), .int(f.position), .text(f.bookId), .text(f.bookTitle), SQLValue(f.bookSubtitle),
-                 .text(f.number), .text(f.title), .text(f.titleNorm), SQLValue(f.addition), SQLValue(f.composer),
-                 SQLValue(f.scoring), SQLValue(f.keySignature), SQLValue(f.coverUrl)]
+                [.int(p.counter), .text(p.bookShortName), .text(p.number), .text(p.title), .text(p.titleNorm),
+                 SQLValue(p.addition), SQLValue(p.keySignature), SQLValue(p.egIx), SQLValue(p.scoring),
+                 SQLValue(p.composerShortName), SQLValue(p.composerShortName2)]
             )
         }
-        try db.run(
-            "INSERT OR REPLACE INTO fetch_state (queryKey, fetchedAtMillis, titleVersion) VALUES (?, ?, ?)",
-            [.text(state.queryKey), .int(state.fetchedAtMillis), SQLValue(state.titleVersion)]
-        )
     }
 
-    private static func fundstelle(_ row: SQLiteConnection.Row) -> FundstelleEntity {
-        FundstelleEntity(
-            queryKey: row.text(0), position: row.int(1), bookId: row.text(2), bookTitle: row.text(3),
-            bookSubtitle: row.textOrNil(4), number: row.text(5), title: row.text(6), titleNorm: row.text(7),
-            addition: row.textOrNil(8), composer: row.textOrNil(9), scoring: row.textOrNil(10),
-            keySignature: row.textOrNil(11), coverUrl: row.textOrNil(12)
-        )
+    static func upsertBookCheck(_ db: SQLiteConnection, bookId: String, checkedAtMillis: Int) throws {
+        try db.run("INSERT OR REPLACE INTO book_checks (bookId, checkedAtMillis) VALUES (?, ?)", [.text(bookId), .int(checkedAtMillis)])
+    }
+
+    static func deleteBookChecks(_ db: SQLiteConnection) throws {
+        try db.run("DELETE FROM book_checks")
     }
 }

@@ -9,6 +9,9 @@ enum InitialLoad { case ready, loading, failed }
 struct StartState {
     var offlineStatus = OfflineStatus(owned: 0, available: 0)
     var selectedAppendix: EgAppendix?
+    /// Einträge in den Favoriten und Zahl der eigenen Listen.
+    var favoriteCount = 0
+    var otherListCount = 0
 }
 
 @MainActor
@@ -63,9 +66,12 @@ final class SearchModel {
 
     private func reload() {
         hasData = (try? container.settings.hasData()) ?? false
+        let lists = (try? container.lists.lists()) ?? []
         start = StartState(
             offlineStatus: (try? container.myBooks.offlineStatus()) ?? OfflineStatus(owned: 0, available: 0),
-            selectedAppendix: try? container.settings.selectedEgAppendix()
+            selectedAppendix: try? container.settings.selectedEgAppendix(),
+            favoriteCount: lists.first(where: \.isFavorites)?.entryCount ?? 0,
+            otherListCount: lists.filter { !$0.isFavorites }.count
         )
         scheduleSearch(delay: .zero)
     }

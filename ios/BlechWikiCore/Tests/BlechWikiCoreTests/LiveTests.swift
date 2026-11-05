@@ -6,20 +6,15 @@ import Testing
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["BLECHWIKI_LIVE"] == "1"))
 struct LiveTests {
 
-    @Test func aenderungsprotokollDerTitelLiefertIxUndZaehler() async throws {
-        let titles = try await JsonBlechWikiAPI().getTitles(after: 60).rows
-        #expect(!titles.isEmpty)
-        #expect(titles.allSatisfy { $0.ix > 0 && $0.changeCounter > 60 })
+    @Test func neueFundstellenAbEinemZaehler() async throws {
+        let pieces = try await JsonBlechWikiAPI().getPieces(after: 65000)
+        #expect(!pieces.isEmpty)
+        #expect(pieces.allSatisfy { $0.counter > 65000 && !$0.bookShortName.isEmpty })
     }
 
-    @Test func eg316HatFundstellenUnterDerMelodie859() async throws {
-        let fundstellen = try await JsonBlechWikiAPI().getFundstellenByEgSong(859)
-        #expect(fundstellen.count > 100)
-        #expect(fundstellen.allSatisfy { Int($0.bookId) != nil })
-    }
-
-    @Test func fundstellenEinesBuchsUeberDieNumerischeId() async throws {
-        let fundstellen = try await JsonBlechWikiAPI().getFundstellenByBook("4035")
-        #expect(Set(fundstellen.map(\.bookTitle)) == ["Bläsermusik 2025 - Württemberg"])
+    @Test func zaehlerDerFundstellenEinesBuchs() async throws {
+        let counters = try await JsonBlechWikiAPI().getBookPieceCounters("4035")
+        #expect(counters.count == 76)
+        #expect(counters.contains(63740))
     }
 }

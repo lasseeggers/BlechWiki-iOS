@@ -4,7 +4,7 @@ import Testing
 @testable import BlechWikiCore
 
 /// Server mit festen JSON-Antworten je Tabelle und Zähler, für Abgleiche über die echte
-/// `JsonBlechWikiAPI`. Merkt sich die Requests als "Tabelle@Zähler".
+/// `JsonBlechWikiAPI`. Merkt sich die Requests als "Tabelle@Zähler", die Fundstellen als "Fundstellen@Zähler".
 private final class RoutingTransport: @unchecked Sendable {
     var bodies: [String: String]
     private(set) var requests: [String] = []
@@ -18,7 +18,9 @@ private final class RoutingTransport: @unchecked Sendable {
         JsonBlechWikiAPI(baseURL: URL(string: "https://example.org/api/")!, transport: { request in
             let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
             let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
-            let key = query["Tabelle"].map { "\($0)@\(query["counter"] ?? "")" } ?? request.url!.lastPathComponent
+            let key = query["Tabelle"].map { "\($0)@\(query["counter"] ?? "")" }
+                ?? query["titelzaehler"].map { "Fundstellen@\($0)" }
+                ?? request.url!.lastPathComponent
             let body = self.lock.withLock {
                 self.requests.append(key)
                 return self.bodies[key] ?? "[]"
@@ -28,29 +30,34 @@ private final class RoutingTransport: @unchecked Sendable {
     }
 }
 
-/// API, die an `StubAPI` weitergibt. `beforeTitles` läuft vor jedem Titel-Abruf, z. B. um ihn
-/// aufzuhalten.
+/// API, die an `StubAPI` weitergibt. `beforeBooks` läuft vor jedem Bücher-Abruf, dem ersten
+/// Request eines Abgleichs, z. B. um ihn aufzuhalten.
 private final class HookedAPI: BlechWikiAPI, @unchecked Sendable {
     let stub: StubAPI
-    var beforeTitles: (@Sendable () async throws -> Void)?
+    var beforeBooks: (@Sendable () async throws -> Void)?
 
     init(_ stub: StubAPI) {
         self.stub = stub
     }
 
-    func getTitles(after: Int) async throws -> TableRows<TitleDto> {
-        try await beforeTitles?()
-        return try await stub.getTitles(after: after)
+    func getBooks(after: Int) async throws -> TableRows<BookDto> {
+        try await beforeBooks?()
+        return try await stub.getBooks(after: after)
     }
-    func getBooks(after: Int) async throws -> TableRows<BookDto> { try await stub.getBooks(after: after) }
     func getComposers(after: Int) async throws -> TableRows<ComposerDto> { try await stub.getComposers(after: after) }
     func getEgSongs() async throws -> [EgSongDto] { try await stub.getEgSongs() }
     func getEgAppendices() async throws -> [EgAppendixDto] { try await stub.getEgAppendices() }
-    func getFundstellenByTitle(_ ix: Int) async throws -> [FundstelleDto] { try await stub.getFundstellenByTitle(ix) }
-    func getFundstellenByEgSong(_ ixUr: Int) async throws -> [FundstelleDto] { try await stub.getFundstellenByEgSong(ixUr) }
-    func getFundstellenByBook(_ bookId: String) async throws -> [FundstelleDto] { try await stub.getFundstellenByBook(bookId) }
-    func getFundstellenByComposer(_ composerId: String) async throws -> [FundstelleDto] { try await stub.getFundstellenByComposer(composerId) }
+    func getPieces(after: Int) async throws -> [PieceDto] { try await stub.getPieces(after: after) }
+    func getBookPieceCounters(_ bookId: String) async throws -> Set<Int> { try await stub.getBookPieceCounters(bookId) }
 }
+
+/// Stand mit Zählern wie nach einem ersten Abgleich, für Tests, die nur irgendeinen Stand schreiben.
+private let someState: SyncState = {
+    var state = SyncState.empty
+    state.bookChangeCounter = 122
+    state.checkedAtMillis = 1_000
+    return state
+}()
 
 private func temporaryDatabaseURL(_ name: String) -> URL {
     FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-\(UUID().uuidString).sqlite")
@@ -67,7 +74,7 @@ struct MasterDataSyncRobustnessTests {
     /// zum nächsten Vollabgleich im WLAN. Jetzt wird es übersprungen, und der Zähler rückt vor.
     @Test func unlesbarerEintragAlleinImDeltaBlockiertNichts() async throws {
         let server = RoutingTransport([
-            "Titel@0": #"[{"titel":"Lobe den Herren","ix":1,"changecounter":69,"change":"new"}]"#,
+            "Fundstellen@0": #"[{"Zähler":10,"Quelle_kurz":"Heft","Seite_Nr":1,"Titel":"Lobe den Herren","EGIx":316}]"#,
             "Buch@0": #"[{"buchId":"1","buchkurz":"Heft","buch":"Heft","changecounter":122,"change":"new"}]"#,
             "Komponist@0": #"[{"id":"1","komponist":"Bach, Johann Sebastian (1685-1750)","friendlyKomponistName":"Bach, Johann Sebastian","changecounter":78,"change":"new"}]"#,
             "EG": #"[{"nr":316,"lied":"Lobe den Herren","anlass":"Loben","ix":316,"ixUr":859,"egTeil":"Stamm"}]"#,
@@ -82,28 +89,29 @@ struct MasterDataSyncRobustnessTests {
         #expect(try db.bookIds() == ["1"])
 
         #expect(try await sync.sync(force: true) == .checked(updated: []))
-        #expect(server.requests.suffix(3) == ["Titel@69", "Buch@124", "Komponist@78"])
+        #expect(server.requests.suffix(3) == ["Buch@124", "Komponist@78", "Fundstellen@10"])
     }
 
     /// Die ganze Tabelle enthält keine gelöschten Einträge. Ihr Zähler liegt nach einer Löschung
-    /// unter dem bekannten. Sänke der gespeicherte Zähler, lüden alle Inventar-Bücher zweimal neu.
+    /// unter dem bekannten. Sänke der gespeicherte Zähler, käme die Löschung beim nächsten Abgleich noch einmal.
     @Test func vollabgleichSenktDenZaehlerNicht() async throws {
         let api = StubAPI()
         let db = try AppDatabase(url: nil)
         var now = Date(timeIntervalSince1970: 1_800_000_000)
         let clock = { @Sendable [now] in now }
         _ = try await MasterDataSync(api: api, db: db, now: clock).sync()
-        api.titles.append(TitleDto(ix: 5, title: "Gelöscht", deleted: true, changeCounter: 70))
+        api.books.append(BookDto(id: "9", shortName: "Weg", title: "Gelöscht", subtitle: nil, year: nil, editor: nil, editorFirstName: nil,
+                                 publisher: nil, publisherNumber: nil, coverUrl: "", deleted: true, changeCounter: 123))
         _ = try await MasterDataSync(api: api, db: db, now: clock).sync(force: true)
-        #expect(try db.syncState()?.titleChangeCounter == 70)
+        #expect(try db.syncState()?.bookChangeCounter == 123)
 
         now += MasterDataSync.fullRefreshInterval + 1
         let later = { @Sendable [now] in now }
         api.calls.removeAll()
         _ = try await MasterDataSync(api: api, db: db, now: later).sync(fullRefreshIfDue: true)
 
-        #expect(api.calls.first == "getTitles(0)")
-        #expect(try db.syncState()?.titleChangeCounter == 70)
+        #expect(api.calls.first == "getBooks(0)")
+        #expect(try db.syncState()?.bookChangeCounter == 123)
     }
 }
 
@@ -125,7 +133,7 @@ struct SyncCoordinatorTests {
     @Test func checkCatalogNowWartetNichtAufDenAltenAbgleich() async throws {
         let api = HookedAPI(stub)
         let calls = CallCounter()
-        api.beforeTitles = {
+        api.beforeBooks = {
             // Nur der erste Abruf hängt, bis er abgebrochen wird
             if calls.increment() == 1 { try await Task.sleep(for: .seconds(60)) }
         }
@@ -150,9 +158,9 @@ struct SyncCoordinatorTests {
         container.myBooks.setOwned("2271", owned: true)
 
         #expect(await container.sync.checkCatalogNow())
-        try await eventually { stub.fundstellenCalls.contains("book:2271") }
+        try await eventually { stub.calls.contains("bookCounters(2271)") }
 
-        #expect(stub.fundstellenCalls == ["book:2271"])
+        #expect(stub.calls.filter { $0.hasPrefix("bookCounters") } == ["bookCounters(2271)"])
     }
 }
 
@@ -185,7 +193,7 @@ struct DatabaseConcurrencyTests {
         let written = DispatchSemaphore(value: 0)
         DispatchQueue.global().async {
             try? db.write { conn in
-                try AppDatabase.upsertSyncState(conn, SyncState(titleChangeCounter: 69, bookChangeCounter: 122, composerChangeCounter: 78, checkedAtMillis: 1_000))
+                try AppDatabase.upsertSyncState(conn, someState)
                 writing.signal()
                 _ = release.wait(timeout: .now() + 10)
             }
@@ -194,7 +202,7 @@ struct DatabaseConcurrencyTests {
         writing.wait()
 
         let read = DispatchSemaphore(value: 0)
-        let stateDuringWrite = Locked<SyncState?>(SyncState(checkedAtMillis: -1))
+        let stateDuringWrite = Locked<SyncState?>(.empty)
         DispatchQueue.global().async {
             stateDuringWrite.value = try? db.syncState()
             read.signal()
@@ -205,7 +213,7 @@ struct DatabaseConcurrencyTests {
 
         #expect(readFinished)
         #expect(stateDuringWrite.value == nil)
-        #expect(try db.syncState()?.titleChangeCounter == 69)
+        #expect(try db.syncState()?.bookChangeCounter == 122)
     }
 
     /// Läuft die Zeit im Hintergrund ab, bricht `interrupt` die Schreibtransaktion ab. Nichts
@@ -217,13 +225,13 @@ struct DatabaseConcurrencyTests {
 
         #expect((Self.interruptedWrite(db) as? SQLiteConnection.Error)?.code == SQLITE_INTERRUPT)
         #expect(try db.syncState() == nil)
-        #expect(try db.titles().isEmpty)
+        #expect(try db.bookIds().isEmpty)
 
         // Ohne laufende Transaktion wirkungslos, die nächste läuft normal
         db.interrupt()
         let api = StubAPI()
         _ = try await MasterDataSync(api: api, db: db).sync()
-        #expect(api.calls.first == "getTitles(0)")
+        #expect(api.calls.first == "getBooks(0)")
         #expect(try db.syncState()?.isComplete == true)
     }
 
@@ -237,10 +245,11 @@ struct DatabaseConcurrencyTests {
         DispatchQueue.global().async {
             do {
                 try db.write { conn in
-                    try AppDatabase.upsertSyncState(conn, SyncState(titleChangeCounter: 69, bookChangeCounter: 122, composerChangeCounter: 78, checkedAtMillis: 1_000))
+                    try AppDatabase.upsertSyncState(conn, someState)
                     writing.signal()
                     interrupted.wait()
-                    try AppDatabase.upsertTitles(conn, [TitleEntity(ix: 1, title: "Lobe den Herren")])
+                    try AppDatabase.upsertBooks(conn, [BookEntity(id: "1", shortName: "Heft", title: "Heft", subtitle: nil, year: nil, editor: nil,
+                                                                  publisher: nil, publisherNumber: nil, coverUrl: nil)])
                 }
             } catch {
                 result.value = error
@@ -265,7 +274,7 @@ struct DatabaseConcurrencyTests {
             let db = try AppDatabase(url: url)
             current = try db.read { try $0.userVersion() }
             try db.write {
-                try AppDatabase.upsertSyncState($0, SyncState(titleChangeCounter: 69, bookChangeCounter: 122, composerChangeCounter: 78, checkedAtMillis: 1_000))
+                try AppDatabase.upsertSyncState($0, someState)
                 try $0.setUserVersion(2)
             }
         }
@@ -286,7 +295,7 @@ struct DatabaseConcurrencyTests {
 
         let db = try #require(opened.value)
         #expect(try db.read { try $0.userVersion() } == current)
-        #expect(try db.syncState()?.titleChangeCounter == 69)
+        #expect(try db.syncState()?.bookChangeCounter == 122)
     }
 }
 

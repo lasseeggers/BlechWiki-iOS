@@ -32,10 +32,24 @@ struct BetterBlechWikiApp: App {
     /// Fehler (z. B. Datei gerade gesperrt) sind kein Grund, den Cache zu löschen, dann nur ein
     /// zweiter Versuch. Scheitert auch der (z. B. Speicher voll), läuft die App mit einer Datenbank
     /// im Speicher und lädt das Verzeichnis bei jedem Start neu, statt beim Start abzustürzen.
+    ///
+    /// Die Listen liegen in einer eigenen Datei und werden in keinem dieser Fälle gelöscht. Lässt
+    /// sie sich nicht öffnen, zeigt nur die Listenseite einen Fehler.
     private static func makeContainer(defaults: UserDefaults) -> AppContainer {
         let log = Logger(subsystem: "blechwiki.eggers.media", category: "Start")
+        func make(_ databaseURL: () throws -> URL?) throws -> AppContainer {
+            let container = try AppContainer(
+                databaseURL: databaseURL(),
+                listsDatabaseURL: { try SharedStorage.listsDatabaseURL() },
+                defaults: defaults
+            )
+            if let error = container.lists.openError {
+                log.error("Listen lassen sich nicht öffnen: \(String(describing: error))")
+            }
+            return container
+        }
         do {
-            return try AppContainer(databaseURL: SharedStorage.databaseURL(), defaults: defaults)
+            return try make { try SharedStorage.databaseURL() }
         } catch where AppDatabase.isCorruption(error) {
             log.error("Datenbank beschädigt, wird neu angelegt: \(String(describing: error))")
             SharedStorage.removeDatabase()
@@ -43,12 +57,12 @@ struct BetterBlechWikiApp: App {
             log.error("Datenbank lässt sich nicht öffnen, neuer Versuch: \(String(describing: error))")
         }
         do {
-            return try AppContainer(databaseURL: SharedStorage.databaseURL(), defaults: defaults)
+            return try make { try SharedStorage.databaseURL() }
         } catch {
             log.error("Datenbank lässt sich nicht öffnen, nur im Speicher: \(String(describing: error))")
         }
         // Im Speicher scheitert das Öffnen nur ohne Arbeitsspeicher, dann ist ohnehin nichts zu retten
-        return try! AppContainer(databaseURL: nil, defaults: defaults)
+        return try! make { nil }
     }
 
     var body: some Scene {
@@ -133,13 +147,16 @@ enum Route: Hashable, Codable {
     case suchergebnisse(SuchergebnisseRoute)
     /// Gesangbuch nach Anlass.
     case hymnal
-    /// Aktualisierung, Impressum, Datenschutz, Version.
+    /// Übersicht der Listen und eine einzelne Liste.
+    case lists
+    case list(id: String)
+    /// Einstellungen: Landeskirche, Aktualisierung, Impressum, Datenschutz, Version.
     case appInfo
 
     // `suchergebnisse` hieß früher `fundstellen`. Der alte Schlüssel bleibt, damit `@SceneStorage`
     // die zuletzt offene Ansicht nach einem Update wiederherstellt.
     private enum CodingKeys: String, CodingKey {
-        case myBooks, egAppendix, hymnal, appInfo
+        case myBooks, egAppendix, hymnal, appInfo, lists, list
         case suchergebnisse = "fundstellen"
     }
 }
@@ -150,33 +167,38 @@ struct SuchergebnisseRoute: Hashable, Codable {
     var detail: String?
     /// Buchansicht: Suche im Buch vorbelegen.
     var initialFilter: String?
+    /// EG-Lied: `ix` des Lieds, für Favoriten und Listen. `query` nennt nur die Melodie.
+    var egIx: Int?
 
-    init(query: FundstellenQuery, label: String, detail: String? = nil, initialFilter: String? = nil) {
+    init(query: FundstellenQuery, label: String, detail: String? = nil, initialFilter: String? = nil, egIx: Int? = nil) {
         self.query = query
         self.label = label
         self.detail = detail
         self.initialFilter = initialFilter
+        self.egIx = egIx
     }
 
     init(_ result: SearchResult) {
-        self.init(query: result.query, label: result.label, detail: result.detail)
+        self.init(query: result.query, label: result.label, detail: result.detail, egIx: result.egIx)
     }
 
     // Codable für `@SceneStorage`. Die Abfrage steht als `cacheKey` drin ("book:5084"), so muss
     // `FundstellenQuery` in BlechWikiCore nichts davon wissen.
-    private enum CodingKeys: String, CodingKey { case query, label, detail, initialFilter }
+    private enum CodingKeys: String, CodingKey { case query, label, detail, initialFilter, egIx }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let key = try container.decode(String.self, forKey: .query)
-        guard let query = Self.query(cacheKey: key) else {
+        let label = try container.decode(String.self, forKey: .label)
+        guard let query = Self.query(cacheKey: key, label: label) else {
             throw DecodingError.dataCorruptedError(forKey: .query, in: container, debugDescription: "Unbekannte Abfrage \(key)")
         }
         self.init(
             query: query,
-            label: try container.decode(String.self, forKey: .label),
+            label: label,
             detail: try container.decodeIfPresent(String.self, forKey: .detail),
-            initialFilter: try container.decodeIfPresent(String.self, forKey: .initialFilter)
+            initialFilter: try container.decodeIfPresent(String.self, forKey: .initialFilter),
+            egIx: try container.decodeIfPresent(Int.self, forKey: .egIx)
         )
     }
 
@@ -186,14 +208,16 @@ struct SuchergebnisseRoute: Hashable, Codable {
         try container.encode(label, forKey: .label)
         try container.encodeIfPresent(detail, forKey: .detail)
         try container.encodeIfPresent(initialFilter, forKey: .initialFilter)
+        try container.encodeIfPresent(egIx, forKey: .egIx)
     }
 
-    /// Umkehrung von `FundstellenQuery.cacheKey`.
-    private static func query(cacheKey: String) -> FundstellenQuery? {
+    /// Umkehrung von `FundstellenQuery.cacheKey`. Titel über `label`: Bis 1.3 stand dort die
+    /// Nummer des Titels, die es nicht mehr gibt.
+    private static func query(cacheKey: String, label: String) -> FundstellenQuery? {
         let parts = cacheKey.split(separator: ":", maxSplits: 1).map(String.init)
         guard parts.count == 2 else { return nil }
         switch parts[0] {
-        case "title": return Int(parts[1]).map { .byTitle($0) }
+        case "title": return .title(label)
         case "eg": return Int(parts[1]).map { .byEgMelody($0) }
         case "book": return .byBook(parts[1])
         case "composer": return .byComposer(parts[1])
@@ -211,6 +235,16 @@ struct SuchergebnisseRoute: Hashable, Codable {
 
     var bookId: String? {
         if case .byBook(let id) = query { id } else { nil }
+    }
+
+    /// Eintrag für Favoriten und Listen. Nur für Titel und EG-Lieder, nicht für Bücher und Komponisten.
+    /// Fehlt `egIx` (Seite aus einer älteren Version wiederhergestellt), das Lied mit `ix` = Melodie.
+    var listRef: ListEntryRef? {
+        switch query {
+        case .byTitle: .title(label)
+        case .byEgMelody(let ixUr): .eg(ix: egIx ?? ixUr, ixUr: ixUr, title: label, label: detail)
+        case .byBook, .byComposer: nil
+        }
     }
 }
 
@@ -263,11 +297,15 @@ struct AppRoot: View {
 /// gewählte Seite über der Suche wie bisher.
 struct RootView: View {
     let container: AppContainer
+    /// Stern und „Zu Liste hinzufügen …“ für alle Seiten des Fensters.
+    @State private var listActionsBox = ModelBox<ListActions>()
     /// Was links gewählt ist: Treffer, Inventar, Gesangbuch usw. Ist die erste Seite rechts.
     @State private var selection: Route?
     /// Seiten, die rechts von dort aus geöffnet wurden (Buch aus dem Inventar, Komponist usw.)
     @State private var path = NavigationPath()
     @State private var columns = NavigationSplitViewVisibility.all
+    /// Einführung über „Hilfe“ auf der Startseite oder im Menü „Hilfe“.
+    @State private var showHelp = false
     /// Auswahl und Seiten über das Beenden der App hinweg, wie die Navigation auf Android.
     @SceneStorage("root.selection") private var savedSelection: Data?
     @SceneStorage("root.path") private var savedPath: Data?
@@ -293,8 +331,9 @@ struct RootView: View {
     }
 
     var body: some View {
+        let listActions = listActionsBox { ListActions(container: container) }
         NavigationSplitView(columnVisibility: $columns) {
-            SearchView(container: container, selection: selectionBinding)
+            SearchView(container: container, selection: selectionBinding) { showHelp = true }
                 .navigationSplitViewColumnWidth(min: 320, ideal: 360, max: 440)
         } detail: {
             NavigationStack(path: $path) {
@@ -310,7 +349,7 @@ struct RootView: View {
                             // wo sie in der schmalen Spalte umbrach
                             Text(SearchView.intro)
                             #endif
-                            Text("Wähle links ein Suchergebnis, das Inventar oder das Gesangbuch.")
+                            Text("Wähle links ein Suchergebnis, das Inventar, die Listen oder das Gesangbuch.")
                         }
                     }
                 }
@@ -323,11 +362,17 @@ struct RootView: View {
         // und verschwände nach jeder Auswahl.
         .navigationSplitViewStyle(.balanced)
         .environment(\.openRoute, OpenRouteAction { path.append($0) })
+        .environment(listActions)
+        .listActionsPresentation(listActions, container: container)
+        .fullScreenCover(isPresented: $showHelp) {
+            OnboardingView(container: container, onClose: { showHelp = false }) { showHelp = false }
+        }
         .focusedSceneValue(\.windowNavigation, WindowNavigation(
             select: { selectionBinding.wrappedValue = $0 },
             back: path.isEmpty ? nil : { path.removeLast() },
             sidebarVisible: columns != .detailOnly,
-            toggleSidebar: { columns = columns == .detailOnly ? .all : .detailOnly }
+            toggleSidebar: { columns = columns == .detailOnly ? .all : .detailOnly },
+            showHelp: { showHelp = true }
         ))
         .onAppear(perform: restore)
         .onChange(of: selection) { _, selection in
@@ -337,7 +382,8 @@ struct RootView: View {
             savedPath = path.codable.flatMap { try? JSONEncoder().encode($0) }
         }
         #if DEBUG
-        // Für Screenshots im Simulator: BBW_OPEN = "mybooks", "hymnal", "appinfo", "eg:<ixUr>", "book:<BuchId>" oder "title:<Titel>".
+        // Für Screenshots im Simulator: BBW_OPEN = "mybooks", "hymnal", "appinfo", "lists", "list:<ListenId>" (Favoriten:
+        // "list:favoriten"), "eg:<ixUr>", "book:<BuchId>" oder "title:<Titel>".
         // BBW_LABEL und BBW_DETAIL setzen Überschrift und Unterzeile wie beim Öffnen aus der Suche.
         // Für die Mac-Bilder, deren Einstellungen kein Skript erreicht: BBW_OWNED = Buch-IDs mit Komma
         // (ersetzt das Inventar), BBW_APPENDIX = Code der Landeskirche, BBW_WINDOW = "1440x900",
@@ -364,10 +410,12 @@ struct RootView: View {
             case ("mybooks", _): selection = .myBooks
             case ("hymnal", _): selection = .hymnal
             case ("appinfo", _): selection = .appInfo
+            case ("lists", _): selection = .lists
+            case ("list", let key): selection = .list(id: key)
             case ("eg", let key):
                 selection = .suchergebnisse(SuchergebnisseRoute(query: .byEgMelody(Int(key) ?? 0), label: env["BBW_LABEL"] ?? "EG-Melodie \(key)", detail: detail))
             case ("book", let key): selection = .suchergebnisse(SuchergebnisseRoute(query: .byBook(key), label: env["BBW_LABEL"] ?? key, detail: detail))
-            case ("title", let key): selection = .suchergebnisse(SuchergebnisseRoute(query: .byTitle(Int(key) ?? 0), label: env["BBW_LABEL"] ?? key, detail: detail))
+            case ("title", let key): selection = .suchergebnisse(SuchergebnisseRoute(query: .title(env["BBW_LABEL"] ?? key), label: env["BBW_LABEL"] ?? key, detail: detail))
             default: break
             }
         }
@@ -402,6 +450,10 @@ struct RootView: View {
             HymnalView(container: container)
         case .appInfo:
             AppInfoView(container: container)
+        case .lists:
+            ListsView(container: container)
+        case .list(let id):
+            ListDetailView(container: container, listId: id)
         }
     }
 }

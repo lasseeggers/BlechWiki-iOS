@@ -1,7 +1,7 @@
 import Foundation
 
-/// Das Inventar: die Bücher, die der Chor besitzt. Der Inhalt markierter Bücher wird im
-/// Hintergrund geladen (`GetBuchFundstellen`, ca. 40 KB pro Buch) und steht danach offline bereit.
+/// Das Inventar: die Bücher, die der Chor besitzt. Ihr Inhalt liegt wie alle Fundstellen lokal.
+/// `SyncCoordinator` gleicht sie alle 30 Tage mit `Buch/{id}` ab, um Löschungen zu finden.
 public final class MyBooksRepository: Sendable {
 
     private let db: AppDatabase
@@ -29,12 +29,11 @@ public final class MyBooksRepository: Sendable {
         try db.book(id: id).map { Self.item($0, isOwned: preferences.ownedBookIds.contains($0.id)) }
     }
 
-    /// Wie viele markierte Bücher schon offline vorliegen.
+    /// Wie viele markierte Bücher offline vorliegen: alle, sobald die Fundstellen da sind.
     public func offlineStatus() throws -> OfflineStatus {
         let ids = preferences.ownedBookIds
-        if ids.isEmpty { return OfflineStatus(owned: 0, available: 0) }
-        let fetched = try db.fetchedKeys(ids.map { FundstellenQuery.byBook($0).cacheKey })
-        return OfflineStatus(owned: ids.count, available: fetched.count)
+        let hasPieces = try db.syncState()?.pieceCounter != nil
+        return OfflineStatus(owned: ids.count, available: hasPieces ? ids.count : 0)
     }
 
     public func setOwned(_ bookId: String, owned: Bool) {

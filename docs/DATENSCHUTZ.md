@@ -1,6 +1,6 @@
 # Datenschutzerklärung
 
-für die App „BlechWiki“ für iPhone, iPad, Mac und Android. Stand: 01.11.2026
+für die App „BlechWiki“ für iPhone, iPad, Mac und Android. Stand: 05.11.2026
 
 ## Verantwortlich
 
@@ -21,16 +21,17 @@ Telefon: +49 89 7400 45840
 
 ## Kurz gesagt
 
-Die App hat kein Konto, keine Werbung, keine Analyse und kein Tracking. Was du in der App einträgst, bleibt auf deinem Gerät.
+Die App hat kein Konto, keine Werbung, keine Analyse und kein Tracking. Was du in der App einträgst, bleibt auf deinem Gerät und in deiner Gerätesicherung.
 
 ## Was auf dem Gerät gespeichert wird
 
 - das Liederverzeichnis von blechwiki.de, damit die Suche ohne Internet funktioniert
 - dein Inventar (welche Bücher im Notenschrank stehen) und die gewählte Landeskirche
+- deine Favoriten und Listen samt Kommentaren
 - zuletzt geladene Suchergebnisse
 - geladene Titelbilder, damit sie nicht jedes Mal neu geladen werden
 
-Diese Daten verlassen das Gerät nicht. Auf iPhone, iPad und Android werden sie mit der App gelöscht. Auf dem Mac bleiben sie nach dem Löschen der App in den Ordnern `~/Library/Containers/blechwiki.eggers.media` und `~/Library/Group Containers/group.blechwiki.eggers.media` liegen, dort kannst du sie von Hand löschen.
+Die App schickt diese Daten nirgendwohin. Hast du die Gerätesicherung eingeschaltet (iCloud-Backup bzw. Google-Sicherung), nimmt das System Inventar, Landeskirche, Favoriten und Listen darin mit, damit sie auf einem neuen Gerät wieder da sind. Auf iPhone, iPad und Android werden sie mit der App gelöscht. Auf dem Mac bleiben sie nach dem Löschen der App in den Ordnern `~/Library/Containers/blechwiki.eggers.media` und `~/Library/Group Containers/group.blechwiki.eggers.media` liegen, dort kannst du sie von Hand löschen.
 
 ## Welche Server die App anfragt
 

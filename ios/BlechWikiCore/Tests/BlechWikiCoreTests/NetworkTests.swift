@@ -29,21 +29,40 @@ final class FakeTransport: @unchecked Sendable {
 /// Antworten gekürzt aus echten Abrufen vom 30.10.2026, wie in der Android-App.
 struct RestAPITests {
 
-    @Test func titelAusDemProtokollMitLoeschungen() async throws {
+    @Test func fundstellenAbDemZaehler() async throws {
         let fake = FakeTransport("""
-            [{"titelohneKomma":"Alle Augen warten auf dich Herre","titel":"Alle Augen warten auf dich, Herre","ix":10374,"changecounter":68,"change":"new"},
-             {"titelohneKomma":"Kanon","titel":"Kanon ","ix":8358,"changecounter":69,"change":"delete"}]
-            """)
+            [{"Zähler":65670,"Quelle_kurz":"LBegleitheftKiTa 19","Seite_Nr":74,"Titel":"Lobe den Herren, den mächtigen König der Ehren",
+              "Titel2":"Intonation","Vorzeich":"1b","EGIx":859,"Besetzung":"2+2","Kompo_kurz":"Koch J H E","Kompo_kurz2":""},
+             {"Zähler":65669,"Quelle_kurz":"LBegleitheftKiTa 19","Seite_Nr":73,"Titel":"Ich sing dir mein Lied","Titel2":" ",
+              "Vorzeich":"4b","EGIx":0,"Besetzung":"","Kompo_kurz":"Fünfgeld T","Kompo_kurz2":"Gunsenheim G"}]
+            """, "[]")
 
-        let titles = try await fake.api.getTitles(after: 66)
-
-        #expect(titles.maxCounter == 69)
-        #expect(titles.rows == [
-            TitleDto(ix: 10374, title: "Alle Augen warten auf dich, Herre", deleted: false, changeCounter: 68),
-            TitleDto(ix: 8358, title: "Kanon", deleted: true, changeCounter: 69),
+        #expect(try await fake.api.getPieces(after: 65666) == [
+            PieceDto(counter: 65670, bookShortName: "LBegleitheftKiTa 19", number: "74", title: "Lobe den Herren, den mächtigen König der Ehren",
+                     addition: "Intonation", keySignature: "1b", egIx: 859, scoring: "2+2", composerShortName: "Koch J H E", composerShortName2: nil),
+            PieceDto(counter: 65669, bookShortName: "LBegleitheftKiTa 19", number: "73", title: "Ich sing dir mein Lied",
+                     addition: nil, keySignature: "4b", egIx: nil, scoring: nil, composerShortName: "Fünfgeld T", composerShortName2: "Gunsenheim G"),
         ])
-        #expect(fake.target(0) == "Version?Tabelle=Titel&counter=66")
+        #expect(fake.target(0) == "Titel?titelzaehler=65666")
         #expect(fake.requests[0].value(forHTTPHeaderField: "User-Agent") == JsonBlechWikiAPI.defaultUserAgent)
+        // Ohne neue Bücher kommt eine leere Liste, kein Fehler
+        #expect(try await fake.api.getPieces(after: 65738) == [])
+    }
+
+    @Test func mitgelieferterStandHatDasselbeFormat() throws {
+        let json = #"[{"Zähler":1,"Quelle_kurz":"101Bläserv","Seite_Nr":2,"Titel":"Macht hoch die Tür","Titel2":"","Vorzeich":"3b","EGIx":881,"Besetzung":"2+2","Kompo_kurz":"Bredenbach I","Kompo_kurz2":""}]"#
+        #expect(try JsonBlechWikiAPI.parsePieces(Data(json.utf8)) == [
+            PieceDto(counter: 1, bookShortName: "101Bläserv", number: "2", title: "Macht hoch die Tür", addition: nil, keySignature: "3b",
+                     egIx: 881, scoring: "2+2", composerShortName: "Bredenbach I", composerShortName2: nil),
+        ])
+        #expect(throws: BlechWikiError.self) { try JsonBlechWikiAPI.parsePieces(Data(#"{"Message":"Fehler"}"#.utf8)) }
+    }
+
+    /// Wie `scripts/fundstellen-stand.sh` die Datei schreibt: Python-gzip mit Dateinamen im Kopf.
+    @Test func gzipMitDateinamenImKopf() throws {
+        let gzip = Data(base64Encoded: "H4sICAAAAAAC/2Z1bmRzdGVsbGVuLmpzb24Ai65Wijq8JCMntUjJylBHKbA0NScnNT67tKhKyUrJIzWtRKk2FgCjjDoSJAAAAA==")!
+        #expect(String(decoding: try Gzip.decompress(gzip), as: UTF8.self) == #"[{"Zähler":1,"Quelle_kurz":"Heft"}]"#)
+        #expect(throws: BlechWikiError.self) { try Gzip.decompress(Data("kein gzip, aber lang genug".utf8)) }
     }
 
     @Test func buecherMitCoverAusDemKurznamen() async throws {
@@ -55,7 +74,7 @@ struct RestAPITests {
 
         #expect(try await fake.api.getBooks(after: 0).rows == [
             BookDto(
-                id: "1", title: "101 Bläservorspiele zum EG", subtitle: nil, year: 1997,
+                id: "1", shortName: "101Bläserv", title: "101 Bläservorspiele zum EG", subtitle: nil, year: 1997,
                 editor: "Evangelischen Posaunendienst", editorFirstName: nil, publisher: "Buch & Musik ejw Stuttgtart",
                 publisherNumber: nil, coverUrl: "https://teddymuetze.ddns.net/Bilder/BilderBuch/mini60/101Bläserv.jpg",
                 deleted: false, changeCounter: 122
@@ -72,9 +91,9 @@ struct RestAPITests {
             """)
 
         #expect(try await fake.api.getComposers(after: 0).rows == [
-            ComposerDto(id: "29", name: "Armsdorff, Andreas", born: "1670", died: "1699", isAlias: false, deleted: false, changeCounter: 78),
-            ComposerDto(id: "29", name: "Armsdorf, Andreas", born: nil, died: nil, isAlias: true, deleted: false, changeCounter: 78),
-            ComposerDto(id: "2000", name: "Kreuter, Walter", born: nil, died: nil, isAlias: false, deleted: false, changeCounter: 78),
+            ComposerDto(id: "29", shortName: "Armsdorff A", name: "Armsdorff, Andreas", born: "1670", died: "1699", isAlias: false, deleted: false, changeCounter: 78),
+            ComposerDto(id: "29", shortName: "Armsdorff A", name: "Armsdorf, Andreas", born: nil, died: nil, isAlias: true, deleted: false, changeCounter: 78),
+            ComposerDto(id: "2000", shortName: "Kreuter W", name: "Kreuter, Walter", born: nil, died: nil, isAlias: false, deleted: false, changeCounter: 78),
         ])
     }
 
@@ -87,9 +106,23 @@ struct RestAPITests {
             """)
 
         #expect(try await fake.api.getComposers(after: 0).rows == [
-            ComposerDto(id: "1339", name: "De Haan, Jacob", born: "1959", died: nil, isAlias: false, deleted: false, changeCounter: 78),
-            ComposerDto(id: "1339", name: "Jabovsky, Tony", born: nil, died: nil, isAlias: true, deleted: false, changeCounter: 78),
-            ComposerDto(id: "2000", name: "Kreuter, Walter", born: nil, died: nil, isAlias: false, deleted: false, changeCounter: 79),
+            ComposerDto(id: "1339", shortName: "Haan J", name: "De Haan, Jacob", born: "1959", died: nil, isAlias: false, deleted: false, changeCounter: 78),
+            ComposerDto(id: "1339", shortName: "Haan J", name: "Jabovsky, Tony", born: nil, died: nil, isAlias: true, deleted: false, changeCounter: 78),
+            ComposerDto(id: "2000", shortName: "Kreuter W", name: "Kreuter, Walter", born: nil, died: nil, isAlias: false, deleted: false, changeCounter: 79),
+        ])
+    }
+
+    @Test func komponistenMitGeborenGestorbenUndAliasvonAuchKleinGeschriebenNebenId() async throws {
+        let fake = FakeTransport("""
+            [{"id":"37","kurz":"Bach J S","komponist":"Bach, Johann Sebastian","geboren":"1685","gestorben":"1750","friendlyKomponistName":"Bach, Johann Sebastian","aliasvon":"","changecounter":78,"change":"new"},
+             {"id":"1079","kurz":"Victoria T L d","komponist":"Victoria Abulensis, Thomas Ludovicus a","geboren":"1548","gestorben":"1611","friendlyKomponistName":"Victoria Abulensis, Thomas Ludovicus a","aliasvon":"Victoria, Tomás Luis de","changecounter":78,"change":"new"},
+             {"id":"1861","kurz":"Fjarill","komponist":"Fjarill (schwedische Folk-Pop-Band)","geboren":"2004","gestorben":" ","friendlyKomponistName":"Fjarill (schwedische Folk-Pop-Band)","aliasvon":"","changecounter":78,"change":"new"}]
+            """)
+
+        #expect(try await fake.api.getComposers(after: 0).rows == [
+            ComposerDto(id: "37", shortName: "Bach J S", name: "Bach, Johann Sebastian", born: "1685", died: "1750", isAlias: false, deleted: false, changeCounter: 78),
+            ComposerDto(id: "1079", shortName: "Victoria T L d", name: "Victoria Abulensis, Thomas Ludovicus a", born: nil, died: nil, isAlias: true, deleted: false, changeCounter: 78),
+            ComposerDto(id: "1861", shortName: "Fjarill", name: "Fjarill (schwedische Folk-Pop-Band)", born: "2004", died: nil, isAlias: false, deleted: false, changeCounter: 78),
         ])
     }
 
@@ -116,25 +149,17 @@ struct RestAPITests {
         #expect(fake.target(0) == "EG")
     }
 
-    @Test func fundstellenUeberDieSchluesselDerStammdaten() async throws {
-        let fake = FakeTransport("""
-            [{"buch":"Bläsermusik 2025 - Württemberg","nr":"113","titel":"Lobe den Herren, den mächtigen König der Ehren","zus":"",
-              "komponist":"Fünfgeld, Traugott","besetzung":"2+2","vorzeichen":"1b","titelZ":null,"buchId":"4035","quellekurz":"WBH2025"}]
-            """)
-        let api = fake.api
-        let expected = [
-            FundstelleDto(
-                bookId: "4035", bookTitle: "Bläsermusik 2025 - Württemberg", number: "113",
-                title: "Lobe den Herren, den mächtigen König der Ehren", addition: nil, composer: "Fünfgeld, Traugott",
-                scoring: "2+2", keySignature: "1b", coverUrl: "https://teddymuetze.ddns.net/Bilder/BilderBuch/mini60/WBH2025.jpg"
-            ),
-        ]
+    @Test func zaehlerDerFundstellenEinesBuchs() async throws {
+        let row = #"{"buch":"Bläsermusik 2025 - Württemberg","nr":"4","titel":"Minuet","zus":"","komponist":"","besetzung":"","vorzeichen":"","titelZ":%@,"buchId":"4035","quellekurz":"WBH2025"}"#
+        let fake = FakeTransport(
+            "[\(row.replacingOccurrences(of: "%@", with: #""63740""#)),\(row.replacingOccurrences(of: "%@", with: #""63739""#))]",
+            "[\(row.replacingOccurrences(of: "%@", with: "null"))]"
+        )
 
-        #expect(try await api.getFundstellenByTitle(10374) == expected)
-        #expect(try await api.getFundstellenByEgSong(859) == expected)
-        #expect(try await api.getFundstellenByBook("4035") == expected)
-        #expect(try await api.getFundstellenByComposer("2000") == expected)
-        #expect((0..<4).map(fake.target) == ["Titel/10374", "EG/859", "Buch/4035", "Komponist/2000"])
+        #expect(try await fake.api.getBookPieceCounters("4035") == [63740, 63739])
+        #expect(fake.target(0) == "Buch/4035")
+        // Ohne titelZ ließe sich nicht sagen, was fehlt: lieber nichts abgleichen
+        await #expect(throws: BlechWikiError.self) { try await fake.api.getBookPieceCounters("4035") }
     }
 
     @Test func egTeile() async throws {
@@ -156,10 +181,10 @@ struct RestAPITests {
 
     @Test func fehler() async throws {
         await #expect(throws: BlechWikiError.httpError(500)) {
-            try await FakeTransport(#"{"Message":"Fehler"}"#, status: 500).api.getFundstellenByBook("999999")
+            try await FakeTransport(#"{"Message":"Fehler"}"#, status: 500).api.getBookPieceCounters("999999")
         }
-        await #expect(throws: BlechWikiError.malformedResponse("Version: kein Array")) {
-            try await FakeTransport(#"{"Message":"Fehler"}"#).api.getTitles(after: 1)
+        await #expect(throws: BlechWikiError.malformedResponse("Titel: kein Array")) {
+            try await FakeTransport(#"{"Message":"Fehler"}"#).api.getPieces(after: 1)
         }
         let offline = JsonBlechWikiAPI(transport: { _ in throw URLError(.notConnectedToInternet) })
         await #expect(throws: BlechWikiError.self) { try await offline.getEgSongs() }
@@ -194,5 +219,25 @@ struct RestAPITests {
         await #expect(throws: BlechWikiError.malformedResponse("Version: Feld buchkurz fehlt")) {
             try await FakeTransport(#"[{"buchId":"1","buch":"Kaputt","changecounter":122}]"#).api.getBooks(after: 0)
         }
+    }
+}
+
+/// Der echte Stand aus `data/`, damit ein kaputtes Format schon beim Testen auffällt. Im
+/// öffentlichen Repo fehlt `data/`, dort läuft der Test nicht.
+private let snapshotDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    .appendingPathComponent("../../../../data").standardizedFileURL
+
+@Suite(.enabled(if: FileManager.default.fileExists(atPath: snapshotDirectory.appendingPathComponent("fundstellen.json.gz").path)))
+struct MitgelieferterStandTests {
+
+    @Test func istLesbarUndVollstaendig() throws {
+        let stand = try String(contentsOf: snapshotDirectory.appendingPathComponent("fundstellen.stand"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(ISO8601DateFormatter().date(from: stand) != nil)
+
+        let data = try Gzip.decompress(Data(contentsOf: snapshotDirectory.appendingPathComponent("fundstellen.json.gz")))
+        let pieces = try JsonBlechWikiAPI.parsePieces(data)
+        #expect(pieces.count > 30_000)
+        #expect(pieces.contains { $0.egIx == 859 && $0.bookShortName == "WBH2025" })
     }
 }

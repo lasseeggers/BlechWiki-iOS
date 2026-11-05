@@ -19,7 +19,7 @@ extension Color {
 struct OnboardingView: View {
 
     let container: AppContainer
-    /// Aus den App-Informationen geöffnet: „Schließen“ auf jeder Seite. Beim ersten Start gibt es nur „Überspringen“.
+    /// Über „Hilfe“ geöffnet: „Schließen“ auf jeder Seite. Beim ersten Start gibt es nur „Überspringen“.
     let onClose: (() -> Void)?
     let onFinish: () -> Void
     @State private var box = ModelBox<OnboardingModel>()
@@ -339,7 +339,7 @@ private struct BooksSetup: View {
                 Section {
                     HStack(spacing: 12) {
                         ProgressView()
-                        Text("Bücherliste wird geladen, einmalig ca. 2 MB …")
+                        Text("Bücherliste wird geladen, einmalig ca. 1 MB …")
                     }
                 }
             }
@@ -461,7 +461,7 @@ private struct LoadStatus: View {
             case .loading:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small).tint(.white)
-                    Text("Liederverzeichnis lädt, einmalig ca. 2 MB")
+                    Text("Liederverzeichnis lädt, einmalig ca. 1 MB")
                 }
             case .failed:
                 HStack(spacing: 8) {

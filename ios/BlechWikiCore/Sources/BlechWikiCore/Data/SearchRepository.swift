@@ -44,22 +44,25 @@ public final class SearchRepository: Sendable {
             }.map(\.element)
         }
 
-        let ownedHits = try ownedHits(owned, labels: (eg + rawTitles).map(\.label))
-        let byNorm = Dictionary(grouping: ownedHits, by: \.titleNorm)
-        func locations(_ label: String) -> [OwnedLocation] {
-            (byNorm[SearchNormalizer.normalize(label)] ?? []).map { OwnedLocation(bookTitle: $0.bookTitle, number: $0.number) }
-        }
+        // Bei EG-Liedern alle Sätze zur Melodie, bei Titeln jede Schreibweise
+        let ownedBooks = Array(owned)
+        var seenNorms = Set<String>()
+        let titleHits = try db.ownedHits(bookIds: ownedBooks, titleNorms: rawTitles.map(\.refKey).filter { seenNorms.insert($0).inserted })
+        var seenMelodies = Set<Int>()
+        let melodyHits = try db.ownedMelodyHits(bookIds: ownedBooks, ixUrs: eg.compactMap(\.refNumber).filter { seenMelodies.insert($0).inserted })
+        let byNorm = Dictionary(grouping: titleHits, by: \.titleNorm)
+        let byMelody = Dictionary(grouping: melodyHits, by: \.ixUr)
 
         var results = SearchResults()
         results.egSongs = eg.map { hit in
             var result = toResult(hit)
             result.detail = SearchIndexBuilder.egSongDetail(variantsOf(hit), byIx: variants, appendix: appendix) ?? hit.detail
-            result.ownedLocations = locations(hit.label)
+            result.ownedLocations = (hit.refNumber.flatMap { byMelody[$0] } ?? []).map { OwnedLocation(bookTitle: $0.bookTitle, number: $0.number) }
             return result
         }
         results.titles = rawTitles.map { hit in
             var result = toResult(hit)
-            result.ownedLocations = locations(hit.label)
+            result.ownedLocations = (byNorm[hit.refKey] ?? []).map { OwnedLocation(bookTitle: $0.bookTitle, number: $0.number) }
             return result
         }
         results.books = rawBooks.map { hit in
@@ -69,16 +72,6 @@ public final class SearchRepository: Sendable {
         }
         results.composers = rawComposers.map(toResult)
         return results
-    }
-
-    private func ownedHits(_ ownedBookIds: Set<String>, labels: [String]) throws -> [OwnedHit] {
-        if ownedBookIds.isEmpty || labels.isEmpty { return [] }
-        var seen = Set<String>()
-        let norms = labels.map(SearchNormalizer.normalize).filter { seen.insert($0).inserted }
-        return try db.ownedHits(
-            queryKeys: ownedBookIds.map { FundstellenQuery.byBook($0).cacheKey },
-            titleNorms: norms
-        )
     }
 
     private func isPreferred(_ variants: [EgSongEntity], number: Int, appendix: String?) -> Bool {
@@ -100,11 +93,11 @@ public final class SearchRepository: Sendable {
     private func toResult(_ hit: SearchHit) -> SearchResult {
         let query: FundstellenQuery = switch hit.type {
         case .egSong: .byEgMelody(hit.refNumber ?? 0)
-        case .title: .byTitle(Int(hit.refKey) ?? 0)
+        case .title: .byTitle(hit.refKey)
         case .book: .byBook(hit.refKey)
         case .composer: .byComposer(hit.refKey)
         }
-        return SearchResult(label: hit.label, detail: hit.detail, query: query)
+        return SearchResult(label: hit.label, detail: hit.detail, query: query, egIx: hit.type == .egSong ? Int(hit.refKey) : nil)
     }
 
     /// "316", "EG 316", "eg316", "EG-316", "„316“". Auf der normalisierten Anfrage, damit Satzzeichen

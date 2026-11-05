@@ -1,14 +1,10 @@
 import Foundation
 
-/// Titel ohne Doppel. `ix` ist der Schlüssel für die Fundstellen.
-struct TitleEntity: Equatable, Sendable {
-    var ix: Int
-    var title: String
-}
-
 /// `id` ist der numerische Index der API, als Text.
 struct BookEntity: Equatable, Sendable {
     var id: String
+    /// "buchkurz", Schlüssel für `PieceEntity.bookShortName`. Vergleich ohne Groß-/Kleinschreibung ("nordd5" / "Nordd5").
+    var shortName: String
     var title: String
     var subtitle: String?
     var year: Int?
@@ -21,6 +17,8 @@ struct BookEntity: Equatable, Sendable {
 /// `id` ist der numerische Index der API, als Text. Schreibvarianten des Namens sind nicht gespeichert.
 struct ComposerEntity: Equatable, Sendable {
     var id: String
+    /// "kurz", z. B. "Fünfgeld T". Schlüssel für `PieceEntity.composerShortName`.
+    var shortName: String?
     var name: String
     var born: String?
     var died: String?
@@ -52,7 +50,7 @@ struct SearchEntry: Equatable, Sendable {
     var label: String
     var detail: String?
     var type: SearchEntryType
-    /// EG: ix, Titel: ix, Buch: id, Komponist: id.
+    /// EG: ix, Titel: normalisierter Titel wie `PieceEntity.titleNorm`, Buch: id, Komponist: id.
     var refKey: String
     /// EG: ixUr (Melodie), sonst nil.
     var refNumber: Int?
@@ -73,9 +71,17 @@ struct SearchHit: Equatable, Sendable {
     var refNumber: Int?
 }
 
-/// Ein Stück in einem gecachten Buch, für "Im Inventar: …" in der Suche.
+/// Ein Stück in einem Inventar-Buch mit diesem Titel, für "Bei euch: …" in der Suche.
 struct OwnedHit: Equatable, Sendable {
     var titleNorm: String
+    var bookId: String
+    var bookTitle: String
+    var number: String
+}
+
+/// Ein Satz zur Melodie `ixUr` in einem Inventar-Buch, für "Bei euch: …" bei EG-Liedern.
+struct OwnedMelodyHit: Equatable, Sendable {
+    var ixUr: Int
     var bookId: String
     var bookTitle: String
     var number: String
@@ -84,37 +90,61 @@ struct OwnedHit: Equatable, Sendable {
 /// Stand des letzten Stammdaten-Abgleichs. Genau eine Zeile mit id 0.
 struct SyncState: Equatable, Sendable {
     /// Höchster bekannter Änderungszähler je Tabelle, `nil` solange die Tabelle nie geladen wurde.
-    var titleChangeCounter: Int?
     var bookChangeCounter: Int?
     var composerChangeCounter: Int?
+    /// Höchster bekannter `PieceEntity.counter`, `nil` solange keine Fundstellen da sind.
+    var pieceCounter: Int?
     var checkedAtMillis: Int
-    /// Letztes vollständiges Neuladen aller Tabellen.
+    /// Letztes vollständiges Neuladen von Büchern, Komponisten und EG.
     var fullSyncAtMillis: Int?
+    /// Wann die Fundstellen zuletzt mit dem Server abgeglichen wurden, nach dem Import der
+    /// Zeitpunkt des mitgelieferten Stands. Erscheint als „Stand“ auf den Ergebnisseiten.
+    var piecesCheckedAtMillis: Int?
+    /// Der zuletzt importierte mitgelieferte Stand (`data/fundstellen.stand`). Ein anderer wird neu importiert.
+    var importedSnapshot: String?
 
-    var isComplete: Bool { titleChangeCounter != nil && bookChangeCounter != nil && composerChangeCounter != nil }
+    static let empty = SyncState(
+        bookChangeCounter: nil, composerChangeCounter: nil, pieceCounter: nil, checkedAtMillis: 0,
+        fullSyncAtMillis: nil, piecesCheckedAtMillis: nil, importedSnapshot: nil
+    )
+
+    var isComplete: Bool { bookChangeCounter != nil && composerChangeCounter != nil && pieceCounter != nil }
 }
 
-/// Gecachte Fundstelle, gespeichert pro Abfrage in API-Reihenfolge.
-struct FundstelleEntity: Equatable, Sendable {
-    var queryKey: String
-    var position: Int
+/// Eine Fundstelle: ein Stück in einem Buch, Zeile aus `Titel?titelzaehler=`. Bücher und
+/// Komponisten kommen über ihre Kurznamen dazu, ohne Groß-/Kleinschreibung.
+struct PieceEntity: Equatable, Sendable {
+    /// Fest und aufsteigend, neue Bücher bekommen höhere Zähler.
+    var counter: Int
+    var bookShortName: String
+    var number: String
+    var title: String
+    /// Normalisierter Titel für Titel-Treffer und „Bei euch“, siehe SearchNormalizer.
+    var titleNorm: String
+    var addition: String?
+    var keySignature: String?
+    /// ix des EG-Lieds, über `eg_songs` zur Melodie (ixUr).
+    var egIx: Int?
+    var scoring: String?
+    var composerShortName: String?
+    var composerShortName2: String?
+}
+
+/// Eine Fundstelle mit Buch und Komponisten aus den Stammdaten.
+struct PieceRow: Equatable, Sendable {
+    var counter: Int
     var bookId: String
     var bookTitle: String
     var bookSubtitle: String?
+    var coverUrl: String?
     var number: String
     var title: String
-    /// Normalisierter Titel, damit die Suche Treffer in eigenen Büchern findet.
-    var titleNorm: String
     var addition: String?
-    var composer: String?
-    var scoring: String?
     var keySignature: String?
-    var coverUrl: String?
-}
-
-struct FetchState: Equatable, Sendable {
-    var queryKey: String
-    var fetchedAtMillis: Int
-    /// `titleChangeCounter` zum Abrufzeitpunkt. Weicht er vom aktuellen ab, gilt der Cache als veraltet.
-    var titleVersion: Int?
+    var scoring: String?
+    var composerShortName: String?
+    var composerShortName2: String?
+    /// Name aus der Komponisten-Tabelle, `nil` wenn der Kurzname dort fehlt.
+    var composerName: String?
+    var composerName2: String?
 }
