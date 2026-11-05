@@ -239,7 +239,7 @@ struct ListsDatabaseTests {
         }
 
         let db = try AppDatabase(url: appURL)
-        #expect(try db.read { try $0.userVersion() } == 5)
+        #expect(try db.read { try $0.userVersion() } == 6)
         let repo = try repository(try ListsDatabase(url: listsURL))
         #expect(try repo.favoriteKeys() == ["t:nun danket alle gott"])
     }

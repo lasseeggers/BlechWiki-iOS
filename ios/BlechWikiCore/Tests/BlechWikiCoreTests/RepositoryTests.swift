@@ -108,6 +108,26 @@ struct RepositoryTests {
         #expect(try c.search.search("nun danket").titles.first?.query == .title("Nun danket alle Gott"))
     }
 
+    @Test func innerhalbDerStufenMehrFundstellenZuerst() async throws {
+        api.composers.append(ComposerDto(id: "3", shortName: "Fünfgeld A", name: "Fünfgeld, Annegret-Maria", born: nil, died: nil,
+                                         isAlias: false, deleted: false, changeCounter: 79))
+        api.pieces += (40010...40012).map { StubAPI.piece($0, "Choral", "\($0)", "Herr, wir bitten: Komm und segne uns", composer: "Fünfgeld A") }
+        api.pieces += (40013...40014).map { StubAPI.piece($0, "Choral", "\($0)", "Herr, das Licht deiner Liebe") }
+        api.pieces.append(StubAPI.piece(40015, "Choral", "20", "Ein Lied aus Niedersachsen", egIx: 900))
+        let c = try await container()
+
+        // Beide beginnen mit „herr“, der längere hat drei Fundstellen statt zwei
+        #expect(try c.search.search("herr").titles.prefix(2).map(\.label) == ["Herr, wir bitten: Komm und segne uns", "Herr, das Licht deiner Liebe"])
+        // Kein Treffer beginnt mit „lied“. Zu „Ein Lied aus Bayern“ gibt es keinen Satz.
+        #expect(try c.search.search("lied").egSongs.map(\.label) == ["Ein Lied aus Niedersachsen", "Ein Lied aus Bayern"])
+        #expect(try c.search.search("fünfgeld").composers.map(\.label) == ["Fünfgeld, Annegret-Maria", "Fünfgeld, Traugott"])
+
+        // Neue Fundstellen ändern die Reihenfolge
+        api.pieces += (40016...40017).map { StubAPI.piece($0, "Choral", "\($0)", "Herr, das Licht deiner Liebe") }
+        _ = try await MasterDataSync(api: api, db: c.db).fetchNewPieces(force: true)
+        #expect(try c.search.search("herr").titles.prefix(2).map(\.label) == ["Herr, das Licht deiner Liebe", "Herr, wir bitten: Komm und segne uns"])
+    }
+
     @Test func komponistenLinksNurFuerBekannteNamen() async throws {
         let c = try await container()
         let names = ComposerNames.split("Fünfgeld, Traugott // NN")
@@ -642,8 +662,8 @@ struct HymnalRepositoryTests {
 struct SchemaTests {
 
     /// Ältere Datenbanken werden verworfen und neu geladen. Version 4 hatte noch einen
-    /// Fundstellen-Cache pro Abfrage und die Titel-Tabelle.
-    @Test(arguments: [2, 4])
+    /// Fundstellen-Cache pro Abfrage und die Titel-Tabelle, Version 5 noch keine `search_weights`.
+    @Test(arguments: [2, 4, 5])
     func datenbankEinerAlterenVersionWirdNeuAufgebaut(version: Int) throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("schema-\(UUID().uuidString).sqlite")
         defer {
@@ -659,7 +679,7 @@ struct SchemaTests {
 
         let db = try AppDatabase(url: url)
 
-        #expect(try db.read { try $0.userVersion() } == 5)
+        #expect(try db.read { try $0.userVersion() } == 6)
         #expect(try db.syncState() == nil)
     }
 

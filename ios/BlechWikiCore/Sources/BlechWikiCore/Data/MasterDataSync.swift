@@ -204,7 +204,11 @@ public actor MasterDataSync {
             if knownPieces == nil { try AppDatabase.deleteAllPieces(conn) }
             try AppDatabase.upsertPieces(conn, pieces)
             // Titel nur aus Büchern im Verzeichnis und ohne EG-Lieder, also neu, wenn sich eins davon ändert
-            if !pieces.isEmpty || books != nil || egSongs != nil { try Self.rebuildTitleIndex(conn) }
+            if !pieces.isEmpty || books != nil || egSongs != nil {
+                try Self.rebuildTitleIndex(conn)
+            } else if composers != nil {
+                try AppDatabase.rebuildSearchWeights(conn)
+            }
             try AppDatabase.upsertSyncState(conn, SyncState(
                 bookChangeCounter: books?.counter ?? stored?.bookChangeCounter,
                 composerChangeCounter: composers?.counter ?? stored?.composerChangeCounter,
@@ -223,11 +227,12 @@ public actor MasterDataSync {
         return .checked(updated: updated)
     }
 
-    /// Muss in einer Schreibtransaktion laufen.
+    /// Mit den Gewichten, die von denselben Tabellen abhängen. Muss in einer Schreibtransaktion laufen.
     private static func rebuildTitleIndex(_ conn: SQLiteConnection) throws {
         let entries = SearchIndexBuilder.titleEntries(try AppDatabase.pieceTitles(conn), egSongs: try AppDatabase.allEgSongs(conn))
         try AppDatabase.deleteSearchEntries(conn, type: .title)
         try AppDatabase.insertSearchEntries(conn, entries)
+        try AppDatabase.rebuildSearchWeights(conn)
     }
 
     /// Ganze Tabelle bei `full` oder unbekanntem Stand, sonst die Änderungen seit `known`.

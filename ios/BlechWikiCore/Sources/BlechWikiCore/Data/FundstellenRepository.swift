@@ -75,6 +75,7 @@ public actor FundstellenRepository {
         let checkedAt = Int(now().timeIntervalSince1970 * 1000)
         try db.write { conn in
             try AppDatabase.deletePieces(conn, counters: removed)
+            if !removed.isEmpty { try AppDatabase.rebuildSearchWeights(conn) }
             try AppDatabase.upsertBookCheck(conn, bookId: bookId, checkedAtMillis: checkedAt)
         }
         return true

@@ -11,7 +11,7 @@ import SQLite3
 /// den alten Stand, statt zu warten.
 public final class AppDatabase: @unchecked Sendable {
 
-    private static let schemaVersion = 5
+    private static let schemaVersion = 6
 
     private let lock = NSLock()
     private let connection: SQLiteConnection
@@ -35,6 +35,7 @@ public final class AppDatabase: @unchecked Sendable {
         // Version 4: neue Normalisierung (ø, æ, Ligaturen)
         // Version 5: alle Fundstellen lokal statt Cache pro Abfrage, ohne Titel-Tabelle. Nach dem
         // Update kommen Bücher, Komponisten und EG neu (ca. 1 MB), die Fundstellen aus der App.
+        // Version 6: search_weights, Treffer mit mehr Fundstellen zuerst
         if try connection.userVersion() != Self.schemaVersion {
             // App und Share Extension öffnen nach einem Update womöglich gleichzeitig. Die
             // Transaktion lässt die zweite warten, danach findet sie das neue Schema vor.
@@ -84,6 +85,8 @@ public final class AppDatabase: @unchecked Sendable {
                 content, norm, label, detail, type, refKey, refNumber,
                 notindexed=norm, notindexed=label, notindexed=detail, notindexed=type,
                 notindexed=refKey, notindexed=refNumber);
+            CREATE TABLE search_weights (
+                type INTEGER NOT NULL, refKey TEXT NOT NULL, weight INTEGER NOT NULL, PRIMARY KEY (type, refKey));
             CREATE TABLE sync_state (
                 id INTEGER PRIMARY KEY NOT NULL, bookChangeCounter INTEGER, composerChangeCounter INTEGER,
                 pieceCounter INTEGER, checkedAtMillis INTEGER NOT NULL, fullSyncAtMillis INTEGER,
@@ -150,13 +153,15 @@ public final class AppDatabase: @unchecked Sendable {
 extension AppDatabase {
 
     /// Treffer eines Typs, sortiert nach: exakter Treffer, Präfix-Treffer, Rest. Innerhalb
-    /// der Gruppen kürzere Labels zuerst.
+    /// der Gruppen die mit mehr Fundstellen zuerst, bei gleich vielen kürzere Labels.
     func search(match: String, type: SearchEntryType, norm: String, limit: Int) throws -> [SearchHit] {
         try read { db in
             try db.rows("""
                 SELECT label, detail, type, refKey, refNumber FROM search_index
                 WHERE search_index MATCH ? AND type = ?
                 ORDER BY CASE WHEN norm = ? THEN 0 WHEN norm LIKE ? THEN 1 ELSE 2 END,
+                         IFNULL((SELECT w.weight FROM search_weights w
+                                 WHERE w.type = search_index.type AND w.refKey = search_index.refKey), 0) DESC,
                          length(norm), norm
                 LIMIT ?
                 """,
@@ -190,6 +195,31 @@ extension AppDatabase {
 
     static func deleteSearchEntries(_ db: SQLiteConnection, type: SearchEntryType) throws {
         try db.run("DELETE FROM search_index WHERE type = ?", [.int(type.rawValue)])
+    }
+
+    /// Wie viele Fundstellen zu einem Eintrag in `search_index` gehören, für die Reihenfolge der
+    /// Treffer. Bücher haben keinen Eintrag. Muss in einer Schreibtransaktion laufen, nachdem sich
+    /// Fundstellen oder Stammdaten geändert haben.
+    static func rebuildSearchWeights(_ db: SQLiteConnection) throws {
+        try db.execute("""
+            DELETE FROM search_weights;
+            -- Fundstellen je Titel. Wie die Titel im Index nur aus Büchern im Verzeichnis.
+            INSERT INTO search_weights (type, refKey, weight)
+            SELECT 1, p.titleNorm, COUNT(*) FROM pieces p JOIN books b ON b.shortName = p.bookShortName
+            GROUP BY p.titleNorm;
+            -- Je Lied (ix) nur die Sätze zu genau diesem Lied. Mit allen Sätzen zur Melodie, wie auf
+            -- der Fundstellen-Seite, stünden selten gespielte Texte auf bekannten Melodien oben.
+            INSERT INTO search_weights (type, refKey, weight)
+            SELECT 0, CAST(p.egIx AS TEXT), COUNT(*) FROM pieces p JOIN books b ON b.shortName = p.bookShortName
+            WHERE p.egIx IS NOT NULL
+            GROUP BY p.egIx;
+            -- Stücke als erster oder zweiter Komponist
+            INSERT INTO search_weights (type, refKey, weight)
+            SELECT 3, c.id, COUNT(*) FROM composers c
+            JOIN pieces p ON p.composerShortName = c.shortName OR p.composerShortName2 = c.shortName
+            JOIN books b ON b.shortName = p.bookShortName
+            GROUP BY c.id;
+            """)
     }
 
     static func insertSearchEntries(_ db: SQLiteConnection, _ entries: [SearchEntry]) throws {
