@@ -78,6 +78,21 @@ struct RestAPITests {
         ])
     }
 
+    @Test func komponistenImFormatAb05112026AuchNebenDenAltenFeldern() async throws {
+        let fake = FakeTransport("""
+            [{"kurz":"Haan J","Komponist":"De Haan, Jacob","Geboren":"1959","Gestorben":"","FriendlyKomponistName":"De Haan, Jacob","aliasvon":"","AutoNr":1339,"change":"new","changecounter":78},
+             {"kurz":"Haan J","Komponist":"Jabovsky, Tony","Geboren":"1959","Gestorben":"","FriendlyKomponistName":"Jabovsky, Tony","aliasvon":"De Haan, Jacob","AutoNr":1339,"change":"new","changecounter":78},
+             {"kurz":"Kreuter W","Komponist":"Kreuter, Walter","Geboren":" ","Gestorben":" ","FriendlyKomponistName":"Kreuter, Walter","aliasvon":"","AutoNr":2000,"change":"update","changecounter":79,
+              "id":"2000","komponist":"Kreuter, Walter ( - )","friendlyKomponistName":"Kreuter, Walter"}]
+            """)
+
+        #expect(try await fake.api.getComposers(after: 0).rows == [
+            ComposerDto(id: "1339", name: "De Haan, Jacob", born: "1959", died: nil, isAlias: false, deleted: false, changeCounter: 78),
+            ComposerDto(id: "1339", name: "Jabovsky, Tony", born: nil, died: nil, isAlias: true, deleted: false, changeCounter: 78),
+            ComposerDto(id: "2000", name: "Kreuter, Walter", born: nil, died: nil, isAlias: false, deleted: false, changeCounter: 79),
+        ])
+    }
+
     @Test func lebensdatenInAllenSchreibweisenDerApi() {
         func dates(_ text: Substring) -> [String?] {
             let d = JsonBlechWikiAPI.lifeDates(text)

@@ -17,7 +17,7 @@ JSON über HTTPS (ASP.NET Web API auf IIS). Die Schnittstelle bietet nur GET. Ke
 |---|---|---|---|
 | `Titel` | `ix` | `titel`, `titelohneKomma` | 9.915 Titel ohne Doppel (aus ca. 37.000 Einträgen), 1,2 MB. Nur `new` und `delete`. |
 | `Buch` | `buchId`, Zahl als Text | `buchkurz`, `buch`, `untertitel`, `erscheinjahr`, `herausgeber`, `herausgvorname`, `verlag`, `verlagsnummer` | 755 Bücher, 257 KB |
-| `Komponist` | `id`, Zahl als Text | `kurz`, `komponist` (mit Lebensdaten in Klammern), `friendlyKomponistName` | 2.477 Einträge zu 2.423 ids, 381 KB |
+| `Komponist` | `AutoNr`, Zahl (bis 03.11.2026 `id`, Zahl als Text) | `kurz`, `Komponist`, `FriendlyKomponistName`, `Geboren`, `Gestorben`, `aliasvon` (bis 03.11.2026 `komponist` mit Lebensdaten in Klammern, `friendlyKomponistName`) | 2.477 Einträge zu 2.423 Nummern, 480 KB |
 
 Zählerstand am 01.11.2026: Titel 69, Buch 122, Komponist 78.
 
@@ -49,7 +49,8 @@ Die Beschreibung des Betreibers nennt für `EG/{…}` den `ix`. Sein Beispiel un
 
 - Unbekannte IDs liefern HTTP 500 mit `{"Message":"Fehler"}`.
 - Zwei Titel kommen doppelt vor und unterscheiden sich nur durch ein Leerzeichen am Ende („Kanon“, ix 4292 und 8358). Sie haben getrennte Fundstellen, die App führt beide.
-- Komponisten: Schreibvarianten stehen als eigene Zeilen mit derselben `id`, erkennbar an `( alias … )` im Feld `komponist`. Die App speichert nur den Haupteintrag. Lebensdaten stehen in Formen wie `(1685-1750)`, `(1954- )`, `( - )` oder `(um 1600-nach 1650)` am Ende des Namens.
+- Komponisten: Schreibvarianten stehen als eigene Zeilen mit derselben `AutoNr` und demselben `kurz`. `aliasvon` nennt den Hauptnamen, beim Haupteintrag ist es leer. Die App speichert nur den Haupteintrag. `Geboren` und `Gestorben` sind Text, meist eine Jahreszahl, auch „um 1600“ oder „nach 1650“, leer als `""` oder `" "`.
+- Seit dem 05.11.2026 liefert `RestBlechWiki1` die Komponisten mit neuen Feldnamen. Bis Version 1.3.0 erwartet die App `id`, `komponist` und `friendlyKomponistName` und bricht ohne sie den Abgleich ab. Ab 1.3.1 liest sie beide Formate, das neue hat Vorrang. Die alten Felder (Lebensdaten dort in Formen wie `(1685-1750)`, `(1954- )`, `( - )` oder `(um 1600-nach 1650)` am Ende des Namens) sollen bleiben, bis 1.3.0 nicht mehr verbreitet ist.
 - Bücher: SOAP lieferte 786. Im neuen Datenmodell fehlen 13 Pseudo-Bücher für die EG-Anhänge („EG NB“ usw.) und 18 Einträge „Einzelaus…“.
 - `EG?anhaenge=true` liefert die Teile des EG als `EGTeilkurz` und `EGTeil`, z. B. `NB` = Niedersachsen/Bremen, `M` = Mecklenburg, dazu `Stamm` und `Add`. Die App lädt die Liste beim Vollabgleich. Ist sie nicht lesbar oder leer, nimmt sie eine eingebaute Liste mit Stand 03.11.2026, damit der Abgleich nicht scheitert.
 - `Titel?search=` liefert höchstens 100 Fundstellen ohne `buchId` und wird nicht genutzt.
@@ -116,7 +117,7 @@ Landeskirche und Inventar liegen in DataStore (iOS: UserDefaults der App Group),
 
 - Je Tabelle merkt sich die App den höchsten `changecounter` und fragt mit `counter=<Stand>`. Ohne Änderungen sind das drei Requests à 2 Byte.
 - Titel und Bücher übernimmt die App Eintrag für Eintrag: neu, geändert oder gelöscht. Der Suchindex des Bereichs wird danach aus der lokalen Tabelle neu gebaut.
-- Komponisten lädt die App bei jeder Änderung ganz neu (381 KB). Schreibvarianten haben dieselbe `id`, eine einzelne Änderung lässt sich nicht eindeutig einer Zeile zuordnen.
+- Komponisten lädt die App bei jeder Änderung ganz neu (480 KB). Schreibvarianten haben dieselbe `AutoNr`, eine einzelne Änderung lässt sich nicht eindeutig einer Zeile zuordnen.
 - Die EG-Lieder haben keinen Zähler. Sie kommen beim ersten Abgleich und beim Vollabgleich, den der WLAN-Job alle 30 Tage macht.
 - Prüfung beim App-Start höchstens alle 24 h. Android hat zusätzlich einen WorkManager-Job, der wöchentlich im WLAN läuft. iOS hat keinen Hintergrund-Job, dort läuft der Vollabgleich beim Öffnen im WLAN.
 - Zeilen, denen ein Pflichtfeld fehlt, überspringt die App. Der gemerkte Zähler rückt trotzdem bis zum höchsten `changecounter` der Antwort vor, auch wenn er zu einer übersprungenen Zeile gehört. Sonst käme ein einzelner fehlerhafter Eintrag bei jedem Abgleich wieder und hielte ihn auf. Als Fehler gilt eine Antwort nur, wenn eine ganze Tabelle leer oder ganz unlesbar zurückkommt oder sich in einer Liste der Änderungen nicht einmal ein Zähler lesen lässt. Dann bleibt der alte Stand.
@@ -192,9 +193,9 @@ Treffer antippen ─► DetailViewModel ─► FundstellenRepository.observe(key
 ## 5. Offene Punkte
 
 - Wünsche an den Betreiber, Stand 03.11.2026:
-  - Erledigt: nur GET, feste Adresse mit Version (`RestBlechWiki1`), Endpunkt für die EG-Teile.
+  - Erledigt: nur GET, feste Adresse mit Version (`RestBlechWiki1`), Endpunkt für die EG-Teile, Lebensdaten und Schreibvarianten der Komponisten als eigene Felder (05.11.2026).
   - Zurückgestellt: gzip. Der Betreiber schaltet es ein, wenn Bedarf erkennbar ist.
   - Gestrichen: alle Zählerstände in einem Aufruf (spart nur zwei Anfragen mit je 2 Byte Antwort) und ein neuer Zähler für ein Buch, wenn sich seine Fundstellen ändern. Der Bestand ändert sich bis auf Korrekturen kaum, das Neuladen nach 30 Tagen reicht.
-  - Offen: Lebensdaten und Schreibvarianten der Komponisten als eigene Felder, stabile IDs (`ix`, `ixUr`, Komponisten) in den Fundstellen, `ixUr` in der Titeltabelle und HTTP 404 bei unbekannter ID. Mit `ixUr` in den Fundstellen fiele die Einschränkung unter „Stufe 4“ weg.
+  - Offen: stabile IDs (`ix`, `ixUr`, Komponisten) in den Fundstellen, `ixUr` in der Titeltabelle und HTTP 404 bei unbekannter ID. Mit `ixUr` in den Fundstellen fiele die Einschränkung unter „Stufe 4“ weg.
   - Offen: Bleibt `RestBlechWiki` für bestehende Installationen erreichbar, und wie lange?
 - Klären, ob ein Initial-Download von ~2,1 MB pro Installation für den Betreiber in Ordnung ist, oder ob wir ein vorgebautes Datenbank-Asset in die APK legen (`createFromAsset`) und nur Deltas laden. Letzteres entlastet den Server und macht die App ab der ersten Sekunde nutzbar. Ich würde das so machen.

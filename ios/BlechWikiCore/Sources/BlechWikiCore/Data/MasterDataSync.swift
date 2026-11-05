@@ -5,7 +5,7 @@ import Foundation
 /// Ablauf: Liegt der letzte Check weniger als `checkInterval` zurück, passiert nichts. Sonst
 /// fragt der Abgleich je Tabelle die Änderungen seit dem gespeicherten Zähler ab (2 Byte, wenn
 /// nichts passiert ist). Titel und Bücher werden einzeln ergänzt, geändert oder gelöscht.
-/// Komponisten werden bei jeder Änderung ganz neu geladen (ca. 380 KB): Schreibvarianten eines
+/// Komponisten werden bei jeder Änderung ganz neu geladen (ca. 480 KB): Schreibvarianten eines
 /// Namens haben dieselbe id, eine Änderung lässt sich nicht eindeutig einem Eintrag zuordnen.
 ///
 /// Der erste Abgleich lädt alles (ca. 2,1 MB), ebenso ein Aufruf mit `fullRefreshIfDue` alle

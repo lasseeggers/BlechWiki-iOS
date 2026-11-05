@@ -132,6 +132,19 @@ public final class JsonBlechWikiAPI: BlechWikiAPI {
 
     public func getComposers(after: Int = 0) async throws -> TableRows<ComposerDto> {
         try await getTable("Komponist", after: after) { row in
+            // Seit 05.11.2026 mit AutoNr, Geboren, Gestorben und aliasvon. Gibt es beide Formate, gilt das neue.
+            if row.values["AutoNr"] != nil {
+                let isAlias = row.textOrNil("aliasvon") != nil
+                return ComposerDto(
+                    id: try row.text("AutoNr"),
+                    name: try row.text("FriendlyKomponistName").trimmingCharacters(in: .whitespaces),
+                    born: isAlias ? nil : row.textOrNil("Geboren"),
+                    died: isAlias ? nil : row.textOrNil("Gestorben"),
+                    isAlias: isAlias,
+                    deleted: row.isDeleted,
+                    changeCounter: try row.int("changecounter")
+                )
+            }
             // "Bach, Johann Sebastian (1685-1750)" oder "Armsdorf, Andreas ( alias Armsdorff, Andreas 1670-1699)"
             let details = Self.details(try row.text("komponist"))
             let isAlias = details.drop(while: { $0 == " " }).hasPrefix("alias ")
