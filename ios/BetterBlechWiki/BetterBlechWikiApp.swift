@@ -9,6 +9,7 @@ import UIKit
 struct BetterBlechWikiApp: App {
 
     @State private var container: AppContainer
+    @State private var cloud: CloudPreferences
     @State private var network = NetworkMonitor()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -25,7 +26,11 @@ struct BetterBlechWikiApp: App {
             let task = BackgroundTask(name: name) { db.interrupt() }
             return { task.end() }
         }
+        // Neue Bücher von einem anderen Gerät brauchen ihre Fundstellen
+        let cloud = CloudPreferences(preferences: container.preferences) { container.sync.downloadOwnedBooks() }
+        cloud.start()
         _container = State(initialValue: container)
+        _cloud = State(initialValue: cloud)
     }
 
     /// Datenbank beschädigt: Cache verwerfen und neu anlegen, wie Room bei Schemafehlern. Andere
@@ -73,6 +78,7 @@ struct BetterBlechWikiApp: App {
                 // neben Nachrichten). Das Aktivieren unten bekommt sie dann nicht mit.
                 .task {
                     for await _ in InventoryImportSignal.notifications() {
+                        cloud.merge()
                         container.changes.notify()
                         container.sync.downloadOwnedBooks()
                     }
@@ -82,6 +88,7 @@ struct BetterBlechWikiApp: App {
         .onChange(of: scenePhase, initial: true) { _, phase in
             guard phase == .active else { return }
             // Die Share Extension kann inzwischen ein Inventar übernommen haben
+            cloud.merge()
             container.changes.notify()
             // Der Abgleich entscheidet selbst, ob ein Request nötig ist (höchstens alle 24 h).
             // Danach lädt er neue Inventar-Bücher.

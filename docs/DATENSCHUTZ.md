@@ -21,7 +21,7 @@ Telefon: +49 89 7400 45840
 
 ## Kurz gesagt
 
-Die App hat kein Konto, keine Werbung, keine Analyse und kein Tracking. Was du in der App einträgst, bleibt auf deinem Gerät und in deiner Gerätesicherung.
+Die App hat kein Konto, keine Werbung, keine Analyse und kein Tracking. Was du in der App einträgst, bleibt auf deinem Gerät und in deiner Gerätesicherung. Auf iPhone, iPad und Mac liegen Inventar und Landeskirche zusätzlich in deinem eigenen iCloud-Account.
 
 ## Was auf dem Gerät gespeichert wird
 
@@ -31,7 +31,13 @@ Die App hat kein Konto, keine Werbung, keine Analyse und kein Tracking. Was du i
 - zuletzt geladene Suchergebnisse
 - geladene Titelbilder, damit sie nicht jedes Mal neu geladen werden
 
-Die App schickt diese Daten nirgendwohin. Hast du die Gerätesicherung eingeschaltet (iCloud-Backup bzw. Google-Sicherung), nimmt das System Inventar, Landeskirche, Favoriten und Listen darin mit, damit sie auf einem neuen Gerät wieder da sind. Auf iPhone, iPad und Android werden sie mit der App gelöscht. Auf dem Mac bleiben sie nach dem Löschen der App in den Ordnern `~/Library/Containers/blechwiki.eggers.media` und `~/Library/Group Containers/group.blechwiki.eggers.media` liegen, dort kannst du sie von Hand löschen.
+Die App schickt diese Daten an keinen Server des Anbieters. Hast du die Gerätesicherung eingeschaltet (iCloud-Backup bzw. Google-Sicherung), nimmt das System Inventar, Landeskirche, Favoriten und Listen darin mit, damit sie auf einem neuen Gerät wieder da sind. Auf iPhone, iPad und Android werden sie mit der App gelöscht. Auf dem Mac bleiben sie nach dem Löschen der App in den Ordnern `~/Library/Containers/blechwiki.eggers.media` und `~/Library/Group Containers/group.blechwiki.eggers.media` liegen, dort kannst du sie von Hand löschen.
+
+## Abgleich über iCloud (iPhone, iPad und Mac)
+
+Bist du bei iCloud angemeldet, speichert die App dein Inventar und die gewählte Landeskirche zusätzlich im iCloud-Schlüsselwertspeicher deines Apple-Accounts. So haben deine Geräte denselben Stand, und nach einer Neuinstallation ist beides wieder da. Gespeichert werden nur die Kennungen der Bücher, das Kürzel der Landeskirche und der Zeitpunkt jeder Änderung. Die Daten liegen bei Apple in deinem Account, der Anbieter der App hat keinen Zugriff darauf. Für die Speicherung gilt die Datenschutzerklärung von Apple. Beim Löschen der App bleibt dieser Stand in iCloud erhalten.
+
+Favoriten und Listen gleicht die App nicht über iCloud ab. Auf Android gibt es keinen Abgleich zwischen Geräten.
 
 ## Welche Server die App anfragt
 
