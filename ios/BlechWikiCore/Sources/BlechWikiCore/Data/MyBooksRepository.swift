@@ -1,7 +1,6 @@
 import Foundation
 
 /// Das Inventar: die Bücher, die der Chor besitzt. Ihr Inhalt liegt wie alle Fundstellen lokal.
-/// `SyncCoordinator` gleicht sie alle 30 Tage mit `Buch/{id}` ab, um Löschungen zu finden.
 public final class MyBooksRepository: Sendable {
 
     private let db: AppDatabase

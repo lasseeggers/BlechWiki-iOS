@@ -36,8 +36,6 @@ final class StubAPI: BlechWikiAPI, @unchecked Sendable {
         piece(40004, "Choral", "6", "Lobe den Herrn, o Seele mein"),
         piece(5000, "EG W", "612", "Ein Lied aus Württemberg"),
     ]
-    /// Zähler je Buch, wie `Buch/{id}` sie als titelZ liefert. Ohne Eintrag: alle Zähler des Buchs aus `pieces`.
-    var bookCounters: [String: Set<Int>] = [:]
     var calls: [String] = []
     /// Aufruf, der fehlschlägt, z. B. "getBooks" (jedes `after`).
     var failOn: String?
@@ -74,12 +72,17 @@ final class StubAPI: BlechWikiAPI, @unchecked Sendable {
         try record("getPieces(\(after))")
         return pieces.filter { $0.counter > after }
     }
+}
 
-    func getBookPieceCounters(_ bookId: String) async throws -> Set<Int> {
-        try record("bookCounters(\(bookId))")
-        if let counters = bookCounters[bookId] { return counters }
-        let shortName = books.first { $0.id == bookId }?.shortName ?? ""
-        return Set(pieces.filter { $0.bookShortName.caseInsensitiveCompare(shortName) == .orderedSame }.map(\.counter))
+extension AppDatabase {
+    /// Zähler der Fundstellen eines Buchs aus dem Verzeichnis.
+    func countersOfBook(_ bookId: String) throws -> [Int] {
+        try read { db in
+            try db.rows(
+                "SELECT p.counter FROM pieces p JOIN books b ON b.shortName = p.bookShortName WHERE b.id = ?",
+                [.text(bookId)]
+            ) { $0.int(0) }
+        }
     }
 }
 
@@ -380,18 +383,50 @@ struct MasterDataSyncTests {
         #expect(try db.composers(names: ["Fünfgeld, Traugott", "Fünfgeld, Anderer"]).sorted { $0.id < $1.id }.map(\.shortName) == ["Fünfgeld T", nil])
     }
 
-    @Test func nach30TagenLaedtDerWlanJobDieStammdatenNeuFundstellenNurNeue() async throws {
+    @Test func nach30TagenLaedtDerWlanJobAllesNeuUndGeloeschteFundstellenVerschwinden() async throws {
         let clock = Clock()
         let sync = MasterDataSync(api: api, db: db, now: { clock.now })
+        // Genug Zeilen, dass eine gelöschte unter der Schwelle für einen Serverfehler bleibt
+        api.pieces += (40010...40029).map { StubAPI.piece($0, "Choral", "\($0)", "Choralsatz") }
         _ = try await sync.sync()
         api.calls.removeAll()
+        api.pieces = api.pieces.filter { $0.counter != 40002 }
         clock.now += 31 * 24 * 3600
 
         #expect(try await sync.sync() == .checked(updated: []))
-        #expect(api.calls == changeChecks)
+        #expect(api.calls == ["getBooks(122)", "getComposers(78)", "getPieces(40029)"])
+        #expect(try db.countersOfBook("2271").sorted() == [40000, 40001, 40002])
         api.calls.removeAll()
-        #expect(try await sync.sync(force: true, fullRefreshIfDue: true) == .checked(updated: [.books, .composers]))
-        #expect(api.calls == fullLoad + ["getPieces(40004)"])
+        #expect(try await sync.sync(force: true, fullRefreshIfDue: true) == .checked(updated: [.pieces, .books, .composers]))
+        #expect(api.calls == fullLoad + ["getPieces(0)"])
+        #expect(try db.countersOfBook("2271").sorted() == [40000, 40001])
+        #expect(try titleIndex() == ["Choralsatz", "Großer Gott, wir loben dich", "Lobe den Herrn, o Seele mein"])
+        #expect(try db.syncState()?.pieceCounter == 40029)
+    }
+
+    /// Am 04.11.2026 lieferte der Server kurz nur einen Bruchteil der Fundstellen.
+    @Test func vollabgleichMitZuWenigFundstellenUebernimmtNurNeue() async throws {
+        let clock = Clock()
+        let sync = MasterDataSync(api: api, db: db, now: { clock.now })
+        _ = try await sync.sync()
+        api.pieces = [StubAPI.piece(40003, "Choral", "5", "Großer Gott, wir loben dich"), StubAPI.piece(40100, "Choral", "7", "Neues Stück")]
+        clock.now += 31 * 24 * 3600
+
+        #expect(try await sync.sync(force: true, fullRefreshIfDue: true) == .checked(updated: [.pieces, .books, .composers]))
+        #expect(try db.countersOfBook("2271").sorted() == [40000, 40001, 40002])
+        #expect(try db.countersOfBook("17").sorted() == [40003, 40004, 40100])
+        #expect(try db.syncState()?.pieceCounter == 40100)
+    }
+
+    @Test func alleDatenNeuLadenUebernimmtAuchWenigeFundstellen() async throws {
+        _ = try await sync.sync()
+        api.pieces = [StubAPI.piece(40003, "Choral", "5", "Großer Gott, wir loben dich")]
+
+        _ = try await sync.sync(reloadAll: true)
+
+        #expect(try db.countersOfBook("2271").isEmpty)
+        #expect(try db.countersOfBook("17") == [40003])
+        #expect(try db.syncState()?.pieceCounter == 40003)
     }
 
     @Test func fehlerBeimAbfragenDerAenderungenLaesstDenAltenStandStehen() async throws {
@@ -471,7 +506,6 @@ struct MasterDataSyncTests {
         let snapshot = snapshot()
         let sync = MasterDataSync(api: api, db: db, snapshot: snapshot)
         _ = try await sync.sync()
-        try db.write { try AppDatabase.upsertBookCheck($0, bookId: "2271", checkedAtMillis: 1) }
         api.failOn = "getBooks"
 
         snapshot.standValue = "2026-12-01T10:00:00Z"
@@ -480,8 +514,26 @@ struct MasterDataSyncTests {
 
         #expect(try db.countersOfBook("2271").sorted() == [40000, 40002])
         #expect(try db.syncState()?.piecesCheckedAtMillis == 1_796_119_200_000)
-        // Ein Buch, das vor dem Stand abgeglichen wurde, wird neu abgeglichen
-        #expect(try db.bookCheckedAtMillis("2271") == nil)
+    }
+
+    /// Ein Update bringt einen frischen Stand mit. Erst wenn er einen Monat alt ist, lädt der
+    /// WLAN-Job alle Fundstellen.
+    @Test func vollabgleichLaedtFundstellenErstWennDerStandEinenMonatAltIst() async throws {
+        let clock = Clock()
+        clock.now = try #require(ISO8601DateFormatter().date(from: stand)) + 10 * 24 * 3600
+        let sync = MasterDataSync(api: api, db: db, snapshot: snapshot(), now: { clock.now })
+        _ = try await sync.sync(fullRefreshIfDue: true)
+        #expect(api.calls == fullLoad + ["getPieces(40003)"])
+        api.calls.removeAll()
+
+        clock.now += 25 * 24 * 3600
+        _ = try await sync.sync(force: true, fullRefreshIfDue: true)
+        #expect(api.calls == changeChecks)
+
+        api.calls.removeAll()
+        clock.now += 6 * 24 * 3600
+        _ = try await sync.sync(force: true, fullRefreshIfDue: true)
+        #expect(api.calls == fullLoad + ["getPieces(0)"])
     }
 
     @Test func standWirdAuchOhneNetzUebernommen() async throws {
@@ -496,14 +548,12 @@ struct MasterDataSyncTests {
         let snapshot = snapshot()
         let sync = MasterDataSync(api: api, db: db, snapshot: snapshot)
         _ = try await sync.sync()
-        try db.write { try AppDatabase.upsertBookCheck($0, bookId: "2271", checkedAtMillis: 1) }
         api.calls.removeAll()
 
         _ = try await sync.sync(reloadAll: true)
 
         #expect(api.calls == fullLoad + ["getPieces(0)"])
         #expect(snapshot.readCount == 1)
-        #expect(try db.bookCheckedAtMillis("2271") == nil)
     }
 
     /// Veränderbare Uhr für den Abgleich.
@@ -512,7 +562,7 @@ struct MasterDataSyncTests {
     }
 }
 
-/// Fundstellen aus der lokalen Tabelle und Abgleich einzelner Bücher.
+/// Fundstellen aus der lokalen Tabelle.
 struct FundstellenRepositoryTests {
 
     let api = StubAPI()
@@ -524,7 +574,7 @@ struct FundstellenRepositoryTests {
         let sync = MasterDataSync(api: api, db: db, now: { clock.now })
         _ = try await sync.sync()
         api.calls.removeAll()
-        return FundstellenRepository(api: api, db: db, sync: sync, now: { clock.now })
+        return FundstellenRepository(db: db, sync: sync)
     }
 
     private func numbers(_ repository: FundstellenRepository, _ query: FundstellenQuery) throws -> [String] {
@@ -555,81 +605,19 @@ struct FundstellenRepositoryTests {
         #expect(try await repository().fetchedAt(.byBook("2271")) == clock.now)
     }
 
-    @Test func abgleichEinesBuchsLoeschtWasDerServerNichtMehrKennt() async throws {
+    /// Auch ein Buch fragt nicht einzeln beim Server nach. Gelöschte Zeilen entfernt der Vollabgleich.
+    @Test func alleSeitenHolenNurAufWunschNeueFundstellen() async throws {
         let repository = try await repository()
-        api.bookCounters = ["2271": [40000]]
 
-        #expect(try await repository.refresh(.byBook("2271")) == true)
-
-        // Neue Fundstellen wurden eben erst geholt, deshalb nur der Abgleich
-        #expect(api.calls == ["bookCounters(2271)"])
-        #expect(try numbers(repository, .byBook("2271")) == ["43"])
-    }
-
-    @Test func abgleichHoechstensAlle30Tage() async throws {
-        let repository = try await repository()
-        #expect(try await repository.refresh(.byBook("2271")) == true)
-        api.calls.removeAll()
-
-        #expect(try await repository.refresh(.byBook("2271")) == false)
+        for query in [FundstellenQuery.byEgMelody(859), .byBook("2271")] {
+            #expect(try await repository.refresh(query) == false)
+        }
         #expect(api.calls.isEmpty)
 
-        clock.now = clock.now.addingTimeInterval(31 * 24 * 3600)
-        #expect(try await repository.refresh(.byBook("2271")) == true)
-        #expect(api.calls == ["getPieces(40004)", "bookCounters(2271)"])
-    }
-
-    /// War die Uhr beim Abgleich vorgestellt, gilt er nicht bis zu diesem Zeitpunkt als frisch.
-    @Test func abgleichInDerZukunftGiltAlsVeraltet() async throws {
-        let repository = try await repository()
-        #expect(try await repository.refresh(.byBook("2271")) == true)
-        clock.now = clock.now.addingTimeInterval(-24 * 3600)
-
-        #expect(try await repository.refresh(.byBook("2271")) == true)
-        #expect(try await repository.refresh(.byBook("2271")) == false)
-    }
-
-    @Test func leereAntwortLoeschtNichts() async throws {
-        let repository = try await repository()
-        api.bookCounters = ["2271": []]
-
-        try await repository.refresh(.byBook("2271"))
-
-        #expect(try numbers(repository, .byBook("2271")).count == 3)
-    }
-
-    /// Die Korrektur hat einen neuen Zähler. Sie muss da sein, bevor die alte Fassung verschwindet.
-    @Test func korrekturErsetztDieAlteZeile() async throws {
-        let repository = try await repository()
-        api.pieces = api.pieces.filter { $0.counter != 40002 } + [StubAPI.piece(40010, "BläshBay22", "12", "Nun danket all Gott")]
-        api.bookCounters = ["2271": [40000, 40001, 40010]]
-
-        try await repository.refresh(.byBook("2271"), force: true)
-
-        #expect(api.calls == ["getPieces(40004)", "bookCounters(2271)"])
-        #expect(try repository.fundstellen(.byBook("2271")).map(\.title).first == "Nun danket all Gott")
-        #expect(try numbers(repository, .byBook("2271")) == ["12", "43", "44"])
-    }
-
-    @Test func fehlerLaesstDieDatenStehenUndWirdBeimNaechstenMalWiederholt() async throws {
-        let repository = try await repository()
-        api.failOn = "bookCounters(2271)"
-
-        await #expect(throws: BlechWikiError.self) { try await repository.refresh(.byBook("2271")) }
-        #expect(try numbers(repository, .byBook("2271")).count == 3)
-
-        api.failOn = nil
-        #expect(try await repository.refresh(.byBook("2271")) == true)
-    }
-
-    @Test func andereSeitenHolenNurAufWunschNeueFundstellen() async throws {
-        let repository = try await repository()
-
-        #expect(try await repository.refresh(.byEgMelody(859)) == false)
-        #expect(api.calls.isEmpty)
-
-        #expect(try await repository.refresh(.byEgMelody(859), force: true) == true)
+        api.pieces.append(StubAPI.piece(40100, "BläshBay22", "50", "Neues Stück"))
+        #expect(try await repository.refresh(.byBook("2271"), force: true) == true)
         #expect(api.calls == ["getPieces(40004)"])
+        #expect(try numbers(repository, .byBook("2271")) == ["12", "43", "44", "50"])
     }
 }
 

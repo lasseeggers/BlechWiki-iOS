@@ -11,10 +11,4 @@ struct LiveTests {
         #expect(!pieces.isEmpty)
         #expect(pieces.allSatisfy { $0.counter > 65000 && !$0.bookShortName.isEmpty })
     }
-
-    @Test func zaehlerDerFundstellenEinesBuchs() async throws {
-        let counters = try await JsonBlechWikiAPI().getBookPieceCounters("4035")
-        #expect(counters.count == 76)
-        #expect(counters.contains(63740))
-    }
 }

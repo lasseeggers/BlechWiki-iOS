@@ -26,8 +26,7 @@ struct BetterBlechWikiApp: App {
             let task = BackgroundTask(name: name) { db.interrupt() }
             return { task.end() }
         }
-        // Neue Bücher von einem anderen Gerät brauchen ihre Fundstellen
-        let cloud = CloudPreferences(preferences: container.preferences) { container.sync.downloadOwnedBooks() }
+        let cloud = CloudPreferences(preferences: container.preferences)
         cloud.start()
         _container = State(initialValue: container)
         _cloud = State(initialValue: cloud)
@@ -80,7 +79,6 @@ struct BetterBlechWikiApp: App {
                     for await _ in InventoryImportSignal.notifications() {
                         cloud.merge()
                         container.changes.notify()
-                        container.sync.downloadOwnedBooks()
                     }
                 }
         }
@@ -399,7 +397,6 @@ struct RootView: View {
             let env = ProcessInfo.processInfo.environment
             if let owned = env["BBW_OWNED"] {
                 container.myBooks.importInventory(owned.split(separator: ",").map(String.init), replace: true)
-                container.sync.downloadOwnedBooks()
             }
             if let appendix = env["BBW_APPENDIX"] { container.settings.selectEgAppendix(appendix) }
             #if targetEnvironment(macCatalyst)

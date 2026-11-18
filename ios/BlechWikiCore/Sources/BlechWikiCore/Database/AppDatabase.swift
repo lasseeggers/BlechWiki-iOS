@@ -101,6 +101,7 @@ public final class AppDatabase: @unchecked Sendable {
             CREATE INDEX pieces_egIx ON pieces(egIx);
             CREATE INDEX pieces_composerShortName ON pieces(composerShortName);
             CREATE INDEX pieces_composerShortName2 ON pieces(composerShortName2);
+            -- Unbenutzt seit dem Abgleich mit allen Fundstellen (11/2026). Fällt mit der nächsten Schemaänderung weg.
             CREATE TABLE book_checks (bookId TEXT PRIMARY KEY NOT NULL, checkedAtMillis INTEGER NOT NULL);
             """)
         connection.clearStatementCache()
@@ -506,19 +507,9 @@ extension AppDatabase {
         }
     }
 
-    func countersOfBook(_ bookId: String) throws -> [Int] {
-        try read { db in
-            try db.rows(
-                "SELECT p.counter FROM pieces p JOIN books b ON b.shortName = p.bookShortName WHERE b.id = ?",
-                [.text(bookId)]
-            ) { $0.int(0) }
-        }
-    }
-
-    func bookCheckedAtMillis(_ bookId: String) throws -> Int? {
-        try read { db in
-            try db.rows("SELECT checkedAtMillis FROM book_checks WHERE bookId = ?", [.text(bookId)]) { $0.int(0) }.first
-        }
+    /// Alle Fundstellen, auch aus Büchern, die nicht im Verzeichnis stehen.
+    func pieceCount() throws -> Int {
+        try read { db in try db.rows("SELECT COUNT(*) FROM pieces") { $0.int(0) }.first ?? 0 }
     }
 
     /// Titel aller Fundstellen in Büchern des Verzeichnisses, mit Doppeln, für den Suchindex.
@@ -528,10 +519,6 @@ extension AppDatabase {
 
     static func deleteAllPieces(_ db: SQLiteConnection) throws {
         try db.run("DELETE FROM pieces")
-    }
-
-    static func deletePieces(_ db: SQLiteConnection, counters: [Int]) throws {
-        for counter in counters { try db.run("DELETE FROM pieces WHERE counter = ?", [.int(counter)]) }
     }
 
     /// Korrigierte Zeilen bekommen einen neuen Zähler, ersetzt wird nur bei gleichem Zähler.
@@ -548,13 +535,5 @@ extension AppDatabase {
                  SQLValue(p.composerShortName), SQLValue(p.composerShortName2)]
             )
         }
-    }
-
-    static func upsertBookCheck(_ db: SQLiteConnection, bookId: String, checkedAtMillis: Int) throws {
-        try db.run("INSERT OR REPLACE INTO book_checks (bookId, checkedAtMillis) VALUES (?, ?)", [.text(bookId), .int(checkedAtMillis)])
-    }
-
-    static func deleteBookChecks(_ db: SQLiteConnection) throws {
-        try db.run("DELETE FROM book_checks")
     }
 }

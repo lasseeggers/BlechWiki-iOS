@@ -5,9 +5,7 @@ import os
 /// Ersatz für WorkManager und `SyncScheduler` der Android-App. iOS lässt Apps im Hintergrund
 /// kaum laufen, deshalb passiert alles, solange die App offen ist:
 /// - beim Aktivieren der App der Stammdaten-Abgleich (überspringt sich selbst, wenn jünger als 24 h),
-///   im WLAN zusätzlich der monatliche Vollabgleich
-/// - danach und nach jeder Inventar-Änderung der Abgleich der Inventar-Bücher mit `Buch/{id}`,
-///   nacheinander, je Buch höchstens alle 30 Tage
+///   im WLAN zusätzlich der monatliche Vollabgleich, der auch gelöschte Fundstellen entfernt
 /// - bei Fehlern bis zu drei Wiederholungen mit wachsendem Abstand (30 s, 60 s, 120 s)
 ///
 /// Wer schreibt, bittet iOS über `beginBackgroundWork` um etwas Zeit im Hintergrund. Die
@@ -25,11 +23,7 @@ public final class SyncCoordinator {
     @ObservationIgnored public var beginBackgroundWork: (@MainActor (String) -> @MainActor () -> Void)?
 
     private let sync: MasterDataSync
-    private let fundstellen: FundstellenRepository
-    private let preferences: UserPreferences
-    private let db: AppDatabase
     @ObservationIgnored private var syncTask: Task<Bool, Never>?
-    @ObservationIgnored private var ownedBooksTask: Task<Void, Never>?
     /// Das WLAN wurde erst erkannt, als schon ein Abgleich lief. Der monatliche Vollabgleich
     /// folgt dann im Anschluss.
     @ObservationIgnored private var fullRefreshPending = false
@@ -38,11 +32,8 @@ public final class SyncCoordinator {
     private static let maxRetries = 3
     private static let backoff: Duration = .seconds(30)
 
-    public init(sync: MasterDataSync, fundstellen: FundstellenRepository, preferences: UserPreferences, db: AppDatabase) {
+    public init(sync: MasterDataSync) {
         self.sync = sync
-        self.fundstellen = fundstellen
-        self.preferences = preferences
-        self.db = db
     }
 
     /// Beim Aktivieren der App und wenn das WLAN erkannt wird. Läuft schon ein Abgleich, wird kein
@@ -73,11 +64,6 @@ public final class SyncCoordinator {
     /// laufenden Abgleich. Fortschritt über `status`.
     public func reloadAll() {
         startSync(force: true, fullRefreshIfDue: false, reloadAll: true)
-    }
-
-    /// Nach Änderungen am Inventar. Die Verzögerung fasst mehrere Klicks zu einem Lauf zusammen.
-    public func downloadOwnedBooks() {
-        startOwnedBooks(delay: .seconds(2))
     }
 
     /// Führt `body` mit Zeit im Hintergrund aus, siehe `beginBackgroundWork`.
@@ -117,12 +103,9 @@ public final class SyncCoordinator {
                     let full = try? await withBackgroundTime("Abgleich") { try await sync.sync(fullRefreshIfDue: true) }
                     log.info("Vollabgleich im WLAN: \(String(describing: full))")
                 }
-                // Ersetzt, aber trotzdem fertig geworden: Status und Inventar sind Sache des neuen Laufs
+                // Ersetzt, aber trotzdem fertig geworden: Der Status ist Sache des neuen Laufs
                 if Task.isCancelled { return true }
                 status = .idle
-                // Erst jetzt ist die Datenversion bekannt. Ein parallel gestarteter Bücher-Abgleich
-                // hielte veraltete Bücher sonst für frisch.
-                startOwnedBooks(delay: .zero)
                 return true
             } catch {
                 if Task.isCancelled { return false }
@@ -135,44 +118,5 @@ public final class SyncCoordinator {
         }
         status = .failed
         return false
-    }
-
-    private func startOwnedBooks(delay: Duration) {
-        ownedBooksTask?.cancel()
-        ownedBooksTask = Task { [weak self] in
-            if delay > .zero {
-                try? await Task.sleep(for: delay)
-            }
-            if Task.isCancelled { return }
-            await self?.runOwnedBooks()
-        }
-    }
-
-    /// Gleicht alle markierten Bücher mit `Buch/{id}` ab, um gelöschte Fundstellen zu finden. Bücher,
-    /// die in den letzten 30 Tagen abgeglichen wurden, kosten keinen Request. Bücher, die nicht
-    /// (mehr) im Verzeichnis stehen, beantwortet der Server mit HTTP 500. Sie kosteten sonst bei
-    /// jedem Aktivieren alle Wiederholungen und bleiben deshalb außen vor.
-    private func runOwnedBooks() async {
-        for attempt in 0...Self.maxRetries {
-            let owned = preferences.ownedBookIds
-            let known = Set((try? db.books(ids: Array(owned)))?.map(\.id) ?? [])
-            let ids = owned.filter(known.contains).sorted()
-            var loaded = 0
-            var failed = 0
-            // Nacheinander, um den privat betriebenen Server nicht zu belasten
-            for id in ids {
-                if Task.isCancelled { return }
-                do {
-                    if try await withBackgroundTime("Inventar", { try await fundstellen.refresh(.byBook(id)) }) { loaded += 1 }
-                } catch {
-                    failed += 1
-                    log.warning("Buch \(id) konnte nicht geladen werden: \(String(describing: error))")
-                }
-            }
-            log.info("Inventar: \(ids.count) Bücher, \(loaded) abgeglichen, \(failed) fehlgeschlagen, \(owned.count - ids.count) nicht im Verzeichnis")
-            if failed == 0 || attempt == Self.maxRetries { return }
-            try? await Task.sleep(for: Self.backoff * (1 << attempt))
-            if Task.isCancelled { return }
-        }
     }
 }

@@ -5,8 +5,9 @@ import Foundation
 /// Fundstellen: Die App bringt einen Stand mit (`PieceSnapshot`). Ist er neuer als der zuletzt
 /// importierte (erster Start, Update), ersetzt er alle Fundstellen, ohne Netz. Danach fragt jeder
 /// Abgleich nur die Zeilen mit höherem Zähler ab (neue Bücher, Korrekturen), meist `[]`. Löschungen
-/// meldet der Server nicht, die findet `FundstellenRepository` pro Buch. Ohne mitgelieferten Stand
-/// oder mit `reloadAll` kommen alle Fundstellen vom Server (ca. 7,5 MB).
+/// meldet der Server nicht. Der Vollabgleich alle `fullRefreshInterval` lädt deshalb alle Fundstellen
+/// (ca. 7,5 MB) und ersetzt die lokalen, außer der mitgelieferte Stand ist jünger. Ebenso ohne
+/// mitgelieferten Stand und mit `reloadAll`.
 ///
 /// Stammdaten: Liegt der letzte Check weniger als `checkInterval` zurück, passiert nichts. Sonst
 /// fragt der Abgleich je Tabelle die Änderungen seit dem gespeicherten Zähler ab (2 Byte, wenn
@@ -36,6 +37,8 @@ public actor MasterDataSync {
     public static let checkInterval: TimeInterval = 24 * 3600
     public static let fullRefreshInterval: TimeInterval = 30 * 24 * 3600
     public static let newPiecesInterval: TimeInterval = 10 * 60
+    /// Anteil der bisherigen Fundstellen, den der Vollabgleich mindestens erhalten muss, um sie zu ersetzen
+    static let minReplaceShare = 0.95
 
     /// Geladene Zeilen einer Tabelle. `isFull`: ganze Tabelle statt Änderungen.
     private struct Rows<T> {
@@ -71,8 +74,8 @@ public actor MasterDataSync {
         }
     }
 
-    /// Nur neue Fundstellen holen (`Titel?titelzaehler=`, meist 2 Byte), z. B. bevor ein Buch
-    /// abgeglichen wird. Ohne `force` nicht, wenn das in den letzten `newPiecesInterval` schon passiert ist.
+    /// Nur neue Fundstellen holen (`Titel?titelzaehler=`, meist 2 Byte), z. B. beim Herunterziehen
+    /// einer Seite. Ohne `force` nicht, wenn das in den letzten `newPiecesInterval` schon passiert ist.
     /// - Returns: `true`, wenn ein Request an den Server ging
     @discardableResult
     public func fetchNewPieces(force: Bool = false) async throws -> Bool {
@@ -127,8 +130,6 @@ public actor MasterDataSync {
             try AppDatabase.upsertPieces(conn, pieces)
             // Ohne Bücher (erster Start) bleibt der Index leer, der folgende Abgleich baut ihn
             try Self.rebuildTitleIndex(conn)
-            // Abgleiche mit Buch/{id} vor dem Stand könnten Zeilen gelöscht haben, die er wieder enthält
-            try AppDatabase.deleteBookChecks(conn)
             var state = try AppDatabase.syncState(conn) ?? .empty
             state.pieceCounter = pieces.map(\.counter).max()
             state.piecesCheckedAtMillis = standMillis
@@ -148,7 +149,10 @@ public actor MasterDataSync {
             return .skipped
         }
         let full = reloadAll || fullRefreshDue || stored?.bookChangeCounter == nil || stored?.composerChangeCounter == nil
-        let knownPieces = reloadAll ? nil : stored?.pieceCounter
+        let knownPieces = stored?.pieceCounter
+        // Löschungen meldet der Server nicht. Nur die ganze Tabelle zeigt, welche Zeilen fehlen.
+        var replacePieces = reloadAll || knownPieces == nil ||
+            (fullRefreshDue && !Self.isRecent(stored?.importedSnapshot, nowMillis: nowMillis))
 
         // Erst alles laden, dann schreiben, damit ein Netzfehler keinen halben Stand hinterlässt.
         // Nacheinander statt parallel, um den privat betriebenen Server nicht zu belasten.
@@ -160,10 +164,18 @@ public actor MasterDataSync {
         }
         let egSongs = full ? try await Self.nonEmpty(api.getEgSongs(), "EG").map(Self.entity) : nil
         let egAppendices = full ? try await api.getEgAppendices().map { EgAppendixEntity(code: $0.code, name: $0.name) } : nil
-        let pieces: [PieceEntity] = if let knownPieces {
-            try await api.getPieces(after: knownPieces).map(Self.entity)
+        var pieces: [PieceEntity]
+        if !replacePieces, let knownPieces {
+            pieces = try await api.getPieces(after: knownPieces).map(Self.entity)
         } else {
-            try await Self.nonEmpty(api.getPieces(after: 0), "Fundstellen").map(Self.entity)
+            pieces = try await Self.nonEmpty(api.getPieces(after: 0), "Fundstellen").map(Self.entity)
+            // Am 04.11.2026 lieferte der Server kurz nur einen Bruchteil. Von selbst ersetzt der
+            // Abgleich deshalb nur, wenn fast alle bisherigen Zeilen kommen. Sonst übernimmt er nur
+            // die neuen und versucht es beim nächsten Vollabgleich wieder.
+            if !reloadAll, let knownPieces, Double(pieces.count) < Double(try db.pieceCount()) * Self.minReplaceShare {
+                replacePieces = false
+                pieces = pieces.filter { $0.counter > knownPieces }
+            }
         }
 
         // Neuen Stand und Index vor der Transaktion bauen, damit die Sperre kurz bleibt
@@ -200,8 +212,7 @@ public actor MasterDataSync {
                 try AppDatabase.deleteSearchEntries(conn, type: .composer)
                 try AppDatabase.insertSearchEntries(conn, composerEntries)
             }
-            if reloadAll { try AppDatabase.deleteBookChecks(conn) }
-            if knownPieces == nil { try AppDatabase.deleteAllPieces(conn) }
+            if replacePieces { try AppDatabase.deleteAllPieces(conn) }
             try AppDatabase.upsertPieces(conn, pieces)
             // Titel nur aus Büchern im Verzeichnis und ohne EG-Lieder, also neu, wenn sich eins davon ändert
             if !pieces.isEmpty || books != nil || egSongs != nil {
@@ -212,7 +223,7 @@ public actor MasterDataSync {
             try AppDatabase.upsertSyncState(conn, SyncState(
                 bookChangeCounter: books?.counter ?? stored?.bookChangeCounter,
                 composerChangeCounter: composers?.counter ?? stored?.composerChangeCounter,
-                pieceCounter: max(knownPieces ?? 0, pieces.map(\.counter).max() ?? 0),
+                pieceCounter: max(replacePieces ? 0 : knownPieces ?? 0, pieces.map(\.counter).max() ?? 0),
                 checkedAtMillis: nowMillis,
                 fullSyncAtMillis: full ? nowMillis : lastFullSync,
                 piecesCheckedAtMillis: nowMillis,
@@ -225,6 +236,14 @@ public actor MasterDataSync {
         if books != nil { updated.insert(.books) }
         if composers != nil { updated.insert(.composers) }
         return .checked(updated: updated)
+    }
+
+    /// Ob der mitgelieferte Stand `stand` (ISO 8601) jünger als `fullRefreshInterval` ist.
+    private static func isRecent(_ stand: String?, nowMillis: Int) -> Bool {
+        guard let stand, let date = ISO8601DateFormatter().date(from: stand) else { return false }
+        let ageMillis = nowMillis - Int(date.timeIntervalSince1970 * 1000)
+        // Zeitpunkt in der Zukunft (Uhr war verstellt): sonst bliebe der Stand bis dahin frisch
+        return ageMillis >= 0 && ageMillis < Int(fullRefreshInterval * 1000)
     }
 
     /// Mit den Gewichten, die von denselben Tabellen abhängen. Muss in einer Schreibtransaktion laufen.

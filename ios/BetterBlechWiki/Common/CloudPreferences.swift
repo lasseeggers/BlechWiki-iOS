@@ -11,13 +11,10 @@ final class CloudPreferences {
 
     private let store = NSUbiquitousKeyValueStore.default
     private let preferences: UserPreferences
-    private let onChange: () -> Void
     private var observer: NSObjectProtocol?
 
-    /// `onChange`: Ein anderes Gerät hat Inventar oder Landeskirche geändert.
-    init(preferences: UserPreferences, onChange: @escaping () -> Void) {
+    init(preferences: UserPreferences) {
         self.preferences = preferences
-        self.onChange = onChange
     }
 
     /// Vor der Frage, ob die Einführung erscheint: Was iCloud schon geladen hat, ist dann übernommen.
@@ -40,7 +37,6 @@ final class CloudPreferences {
     func merge() {
         let changed = preferences.merge(with: store)
         log.info("iCloud abgeglichen: \(self.preferences.ownedBookIds.count) Bücher, geändert: \(changed)")
-        if changed { onChange() }
     }
 
     private let log = Logger(subsystem: "blechwiki.eggers.media", category: "iCloud")

@@ -109,20 +109,19 @@ final class SuchergebnisseModel {
         )
     }
 
-    /// Zeigt sofort den Cache und lädt nach, wenn nichts da oder der Eintrag veraltet ist.
+    /// Zeigt die lokalen Fundstellen. Sie brauchen kein Netz, neue holt erst `refresh`.
     func observe() async {
         reload()
-        await refresh(force: false)
     }
 
-    /// `force` = false lädt nur, wenn nichts im Cache liegt oder er veraltet ist.
-    func refresh(force: Bool = true) async {
+    /// Neue Fundstellen holen, beim Herunterziehen und nach einem Fehler.
+    func refresh() async {
         isRefreshing = true
         refreshFailed = false
         refreshFailedOnServer = false
         do {
             _ = try await container.sync.withBackgroundTime("Suchergebnisse") {
-                try await container.fundstellen.refresh(route.query, force: force)
+                try await container.fundstellen.refresh(route.query, force: true)
             }
         } catch {
             refreshFailed = true
@@ -140,7 +139,6 @@ final class SuchergebnisseModel {
 
     func setOwned(_ bookId: String, owned: Bool) {
         container.myBooks.setOwned(bookId, owned: owned)
-        if owned { container.sync.downloadOwnedBooks() }
     }
 
     /// Deutsche Sortierung („Ö“ bei „O“), bei gleichem Titel nach Nummer im Heft.

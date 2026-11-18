@@ -61,7 +61,6 @@ final class MyBooksModel {
 
     func toggle(_ book: BookItem) {
         container.myBooks.setOwned(book.id, owned: !book.isOwned)
-        if !book.isOwned { container.sync.downloadOwnedBooks() }
     }
 
     func openImport() {
@@ -85,7 +84,6 @@ final class MyBooksModel {
     func confirmImport() {
         guard case let .ready(books, _) = importPreview else { return }
         container.myBooks.importInventory(books.map(\.id), replace: replaceInventory)
-        container.sync.downloadOwnedBooks()
         onlySelected = true
         closeImport()
     }

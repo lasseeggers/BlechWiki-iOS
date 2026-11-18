@@ -60,7 +60,9 @@ In der App und im Code heißt die Ansicht dazu „Suchergebnisse“ (iOS `Sucher
 | `Buch/{buchId}` | `buchId` | 4035 „Bläsermusik 2025 - Württemberg“ → 76 Stücke, 17 KB |
 | `Komponist/{id}` | `id` aus `Komponist` | 2000 „Kreuter, Walter“ |
 
-Alle liefern dieselbe Zeilenstruktur: `buch, nr, titel, zus, komponist, besetzung, vorzeichen, titelZ, buchId, quellekurz`. `titelZ` ist der `Zähler` von oben (als Text), bei `EG/` und `Komponist/` fehlt er. Die App nutzt nur noch `Buch/{buchId}`, um gelöschte Zeilen eines Buchs zu finden. Die Felder stimmen für Buch 4035 mit der Tabelle oben überein. Einzige Ausnahme: Ein leerer `Kompo_kurz` erscheint hier als „NN“.
+Alle liefern dieselbe Zeilenstruktur: `buch, nr, titel, zus, komponist, besetzung, vorzeichen, titelZ, buchId, quellekurz`. `titelZ` ist der `Zähler` von oben (als Text), bei `EG/` und `Komponist/` fehlt er. Die App nutzt keinen dieser Endpunkte mehr. Bis 1.4.2 fragte sie für jedes Buch im Inventar alle 30 Tage `Buch/{buchId}` ab, um gelöschte Zeilen zu finden, nacheinander. Bei einem Inventar mit rund 190 Büchern waren das rund 190 Anfragen in 17 Minuten, die den Server laut Betreiber minutenlang blockierten (Log vom 17.11.2026). Die Felder stimmen für Buch 4035 mit der Tabelle oben überein. Einzige Ausnahme: Ein leerer `Kompo_kurz` erscheint hier als „NN“.
+
+**`Buch` ohne ID** liefert alle Fundstellen in dieser Zeilenstruktur, eingerichtet von Dieter Kipp am 17.11.2026 als Ersatz für die Abfragen pro Buch. Test am 18.11.2026: 39.695 Zeilen aus 772 Büchern, 8,6 MB in 4,1 s, jeder `titelZ` einmal. Anders als bei `Buch/{buchId}` kommen `nr`, `titelZ` und `buchId` als Zahl. Die 1.824 Zeilen mehr als in `Titel?titelzaehler=0` gehören zu EG-Anhängen und privaten Sammlungen. Die App nutzt den Endpunkt nicht: `Titel?titelzaehler=0` enthält alle Zähler, die sie braucht, dazu `EGIx` und die Komponisten-Kürzel, und war im selben Test kleiner und schneller (7,6 MB, 2,1 s).
 
 Die Beschreibung des Betreibers nennt für `EG/{…}` den `ix`. Sein Beispiel und unsere Tests zeigen, dass die Melodie (`ixUr`) gemeint ist.
 
@@ -161,13 +163,13 @@ Sicherung: Auf Android nehmen die Backup-Regeln (`data_extraction_rules.xml`, `b
 
 - Je Tabelle merkt sich die App den höchsten `changecounter` und fragt mit `counter=<Stand>`, bei den Fundstellen mit `titelzaehler=<höchster Zähler>`. Ohne Änderungen sind das drei Requests à 2 Byte.
 - Bücher übernimmt die App Eintrag für Eintrag: neu, geändert oder gelöscht. Neue Fundstellen kommen dazu, eine Korrektur als neue Zeile. Der Suchindex des Bereichs wird danach aus der lokalen Tabelle neu gebaut.
-- Gelöschte Fundstellen meldet der Server nicht. Beim Öffnen eines Buchs und für die Bücher im Inventar fragt die App höchstens alle 30 Tage `Buch/{buchId}` und löscht Zeilen dieses Buchs, deren Zähler dort als `titelZ` fehlt. Vorher holt sie neue Fundstellen, damit eine Korrektur nicht fehlt, wenn ihre alte Fassung verschwindet. Eine leere Antwort löscht nichts. Andere Seiten (EG-Lied, Titel, Komponist) holen beim Herunterziehen nur neue Fundstellen.
+- Gelöschte Fundstellen meldet der Server nicht. Der Vollabgleich im WLAN alle 30 Tage lädt deshalb alle Fundstellen mit `Titel?titelzaehler=0` (ca. 7,5 MB) und ersetzt die lokalen. Ausnahme: Der mitgelieferte Stand ist jünger als 30 Tage, dann holt er nur neue. Kommen weniger als 95 % der bisherigen Zeilen, nimmt die App einen Serverfehler an wie am 04.11.2026, übernimmt nur die neuen Zeilen und versucht es beim nächsten Vollabgleich wieder. Dieselbe Schwelle nutzt `scripts/fundstellen-stand.sh`.
+- Über Mobilfunk lädt die App nie von selbst alle Fundstellen, außer es gibt keinen mitgelieferten Stand. Herunterziehen holt auf jeder Seite nur neue Fundstellen, auch in einem Buch.
 - „Alle Daten neu laden“ in den Einstellungen (Mac: Menü „Darstellung“) lädt alles vom Server, auch alle Fundstellen (ca. 8,5 MB), nach einer Rückfrage. Für den Fall, dass trotzdem etwas fehlt oder falsch ist.
 - Komponisten lädt die App bei jeder Änderung ganz neu (475 KB). Schreibvarianten haben dieselbe `id`, eine einzelne Änderung lässt sich nicht eindeutig einer Zeile zuordnen.
-- Die EG-Lieder haben keinen Zähler. Sie kommen beim ersten Abgleich und beim Vollabgleich von Büchern, Komponisten und EG, den der WLAN-Job alle 30 Tage macht. Fundstellen lädt er dabei nicht ganz.
+- Die EG-Lieder haben keinen Zähler. Sie kommen beim ersten Abgleich und beim Vollabgleich von Büchern, Komponisten und EG, den der WLAN-Job alle 30 Tage macht.
 - Prüfung beim App-Start höchstens alle 24 h. Android hat zusätzlich einen WorkManager-Job, der wöchentlich im WLAN läuft. iOS hat keinen Hintergrund-Job, dort läuft der Vollabgleich beim Öffnen im WLAN.
 - Zeilen, denen ein Pflichtfeld fehlt, überspringt die App. Der gemerkte Zähler rückt trotzdem bis zum höchsten `changecounter` der Antwort vor, auch wenn er zu einer übersprungenen Zeile gehört. Sonst käme ein einzelner fehlerhafter Eintrag bei jedem Abgleich wieder und hielte ihn auf. Als Fehler gilt eine Antwort nur, wenn eine ganze Tabelle leer oder ganz unlesbar zurückkommt oder sich in einer Liste der Änderungen nicht einmal ein Zähler lesen lässt. Dann bleibt der alte Stand.
-- Inventar-Bücher, die nicht mehr im Verzeichnis stehen (vom Server gelöscht), gleicht die App nicht ab. Der Server beantwortet unbekannte Buch-IDs mit HTTP 500.
 - iOS liest über eine zweite, nur lesende SQLite-Verbindung. Ein laufender Abgleich, der den Suchindex schreibt, hält so keine Anzeige auf (WAL).
 
 ### Gesangbuch
@@ -183,7 +185,7 @@ Kotlin, Jetpack Compose, Material 3, eine Activity, Unidirectional Data Flow (Vi
 | Netzwerk | OkHttp + JSON-Parser von kotlinx.serialization (ohne Compiler-Plugin) | 6 GET-Endpunkte mit flachen Zeilen. Eigene DTOs mit Mapping von Hand, weil die API leere Werte als `""` liefert und Zahlen teils als Text. |
 | Persistenz | Room mit FTS4 | lokale Suche, alle Fundstellen; Listen in eigener Room-Datenbank mit Migrationen |
 | Einstellungen | DataStore | Landeskirche, Sync-Zeitpunkte, Datenversion |
-| Hintergrund | WorkManager | Initial-Sync, Abgleich der Inventar-Bücher, Update-Check |
+| Hintergrund | WorkManager | Initial-Sync, monatlicher Vollabgleich im WLAN, Update-Check |
 | DI | Hilt | Standard, gut testbar |
 | Bilder | Coil mit Disk-Cache | Cover sind unveränderlich |
 | Navigation | Navigation Compose (typsichere Routen) | |
@@ -211,7 +213,7 @@ sync_state(id PK = 0, bookChangeCounter, composerChangeCounter, pieceCounter, ch
            piecesCheckedAtMillis, importedSnapshot)
 pieces(counter PK, bookShortName NOCASE, number, title, titleNorm, addition, keySignature, egIx, scoring,
        composerShortName NOCASE, composerShortName2 NOCASE)
-book_checks(bookId PK, checkedAtMillis)   letzter Abgleich mit Buch/{id}
+book_checks(bookId PK, checkedAtMillis)   unbenutzt seit 11/2026, fällt mit der nächsten Schemaänderung weg
 ```
 
 Auf iOS liegt dasselbe Schema in SQLite (`AppDatabase`).
@@ -229,7 +231,7 @@ list_entries(id PK, listId → lists ON DELETE CASCADE, position, kind, entryKey
 ```
 Tastendruck ─► SearchViewModel ─► SearchRepository.search(q)  (Room FTS, kein Netz)
 Treffer antippen ─► SuchergebnisseViewModel ─► FundstellenRepository.observe(query)  (Join pieces/books/composers, kein Netz)
-                                              └─ Buch, Abgleich älter als 30 Tage: Buch/{id} ─► gelöschte Zeilen weg ─► Flow emittiert neu
+Herunterziehen ─► FundstellenRepository.refresh ─► MasterDataSync.fetchNewPieces  (Titel?titelzaehler=, meist 2 Byte)
 ```
 
 ## 4. Bedienung

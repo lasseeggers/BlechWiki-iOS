@@ -42,7 +42,7 @@ Screenshots: links Android (Galaxy S8, Android 9), rechts iOS (Simulator iPhone 
 - Bei EG-Liedern zählt die Melodie. Die Liste enthält auch Sätze, die im Heft unter einem anderen Liedtext stehen.
 - Filter oben: nur Bücher aus dem Inventar oder eine bestimmte Besetzung (2+2, 3+2, 2+2+1 Solotrompete …).
 - Bücher aus dem Inventar stehen zuerst. Das Lesezeichen am Buch nimmt es ins Inventar auf oder entfernt es.
-- Suchergebnisse kommen ohne Internet aus. Unten steht, wann die Daten zuletzt mit blechwiki.de abgeglichen wurden. Öffnet man ein Buch, prüft die App höchstens alle 30 Tage, ob Stücke daraus bei blechwiki.de gelöscht wurden.
+- Suchergebnisse kommen ohne Internet aus. Unten steht, wann die Daten zuletzt mit blechwiki.de abgeglichen wurden. Einmal im Monat lädt die App im WLAN alle Fundstellen neu, dabei verschwinden Stücke, die bei blechwiki.de gelöscht wurden.
 
 ## Buchansicht
 

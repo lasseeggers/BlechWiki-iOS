@@ -45,7 +45,6 @@ final class OnboardingModel {
 
     func toggle(_ book: BookItem) {
         container.myBooks.setOwned(book.id, owned: !book.isOwned)
-        if !book.isOwned { container.sync.downloadOwnedBooks() }
     }
 
     func retry() {

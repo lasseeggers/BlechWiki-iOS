@@ -149,19 +149,6 @@ struct RestAPITests {
         #expect(fake.target(0) == "EG")
     }
 
-    @Test func zaehlerDerFundstellenEinesBuchs() async throws {
-        let row = #"{"buch":"Bläsermusik 2025 - Württemberg","nr":"4","titel":"Minuet","zus":"","komponist":"","besetzung":"","vorzeichen":"","titelZ":%@,"buchId":"4035","quellekurz":"WBH2025"}"#
-        let fake = FakeTransport(
-            "[\(row.replacingOccurrences(of: "%@", with: #""63740""#)),\(row.replacingOccurrences(of: "%@", with: #""63739""#))]",
-            "[\(row.replacingOccurrences(of: "%@", with: "null"))]"
-        )
-
-        #expect(try await fake.api.getBookPieceCounters("4035") == [63740, 63739])
-        #expect(fake.target(0) == "Buch/4035")
-        // Ohne titelZ ließe sich nicht sagen, was fehlt: lieber nichts abgleichen
-        await #expect(throws: BlechWikiError.self) { try await fake.api.getBookPieceCounters("4035") }
-    }
-
     @Test func egTeile() async throws {
         let fake = FakeTransport(#"[{"EGTeilkurz":"Add","EGTeil":"Ergänzungen"},{"EGTeilkurz":"NB","EGTeil":"Niedersachsen/Bremen"}]"#)
         #expect(try await fake.api.getEgAppendices() == [
@@ -181,7 +168,7 @@ struct RestAPITests {
 
     @Test func fehler() async throws {
         await #expect(throws: BlechWikiError.httpError(500)) {
-            try await FakeTransport(#"{"Message":"Fehler"}"#, status: 500).api.getBookPieceCounters("999999")
+            try await FakeTransport(#"{"Message":"Fehler"}"#, status: 500).api.getPieces(after: 1)
         }
         await #expect(throws: BlechWikiError.malformedResponse("Titel: kein Array")) {
             try await FakeTransport(#"{"Message":"Fehler"}"#).api.getPieces(after: 1)

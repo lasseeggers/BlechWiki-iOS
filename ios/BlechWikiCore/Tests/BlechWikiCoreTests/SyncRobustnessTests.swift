@@ -48,7 +48,6 @@ private final class HookedAPI: BlechWikiAPI, @unchecked Sendable {
     func getEgSongs() async throws -> [EgSongDto] { try await stub.getEgSongs() }
     func getEgAppendices() async throws -> [EgAppendixDto] { try await stub.getEgAppendices() }
     func getPieces(after: Int) async throws -> [PieceDto] { try await stub.getPieces(after: after) }
-    func getBookPieceCounters(_ bookId: String) async throws -> Set<Int> { try await stub.getBookPieceCounters(bookId) }
 }
 
 /// Stand mit Zählern wie nach einem ersten Abgleich, für Tests, die nur irgendeinen Stand schreiben.
@@ -115,7 +114,7 @@ struct MasterDataSyncRobustnessTests {
     }
 }
 
-/// Zusammenspiel von Abgleich und Inventar im `SyncCoordinator`.
+/// Abläufe im `SyncCoordinator`.
 @MainActor
 struct SyncCoordinatorTests {
 
@@ -147,20 +146,6 @@ struct SyncCoordinatorTests {
         #expect(ContinuousClock.now - start < .seconds(10))
         #expect(container.sync.status == .idle)
         #expect(try container.db.syncState() != nil)
-    }
-
-    /// Für Buch-IDs, die nicht im Verzeichnis stehen, antwortet der Server mit HTTP 500. Ein vom
-    /// Server gelöschtes Buch im Inventar kostete sonst bei jedem Aktivieren vier Requests.
-    @Test func inventarLaedtNurBuecherAusDemVerzeichnis() async throws {
-        let container = try AppContainer(api: stub, databaseURL: nil, defaults: defaults)
-        // "1000" käme sortiert vor "2271" dran
-        container.myBooks.setOwned("1000", owned: true)
-        container.myBooks.setOwned("2271", owned: true)
-
-        #expect(await container.sync.checkCatalogNow())
-        try await eventually { stub.calls.contains("bookCounters(2271)") }
-
-        #expect(stub.calls.filter { $0.hasPrefix("bookCounters") } == ["bookCounters(2271)"])
     }
 }
 

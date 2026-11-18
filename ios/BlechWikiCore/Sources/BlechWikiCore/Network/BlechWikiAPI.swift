@@ -22,14 +22,9 @@ public protocol BlechWikiAPI: Sendable {
     func getEgAppendices() async throws -> [EgAppendixDto]
 
     /// Alle Fundstellen mit höherem Zähler als `after`, bei 0 alle (ca. 7,5 MB ohne gzip). Neue
-    /// Bücher kommen so dazu. Korrekturen bekommen einen neuen Zähler, Löschungen meldet der
-    /// Server nicht, siehe `getBookPieceCounters`.
+    /// Bücher kommen so dazu. Korrekturen bekommen einen neuen Zähler. Löschungen meldet der
+    /// Server nicht, gelöschte Zeilen fehlen nur bei 0.
     func getPieces(after: Int) async throws -> [PieceDto]
-
-    /// Zähler (`PieceDto.counter`) aller Fundstellen, die der Server für das Buch `bookId`
-    /// (`BookDto.id`) noch kennt. Fehlt einer Zeile der Zähler, gilt die Antwort als fehlerhaft,
-    /// damit der Abgleich nichts löscht, was noch da ist.
-    func getBookPieceCounters(_ bookId: String) async throws -> Set<Int>
 }
 
 /// REST-API von Dieter Kipp, Beschreibung in docs/ARCHITEKTUR.md.
@@ -190,19 +185,6 @@ public final class JsonBlechWikiAPI: BlechWikiAPI {
         // Ohne neue Bücher kommt [] zurück, das ist kein Formatfehler
         return try await get(["Titel"], [("titelzaehler", String(after))]) { json in
             try Self.rows(json, "Titel", allowNone: after > 0, Self.piece)
-        }
-    }
-
-    public func getBookPieceCounters(_ bookId: String) async throws -> Set<Int> {
-        try await get(["Buch", bookId]) { json in
-            guard let array = json as? [Any] else { throw BlechWikiError.malformedResponse("Buch: kein Array") }
-            // Zahl als Text, z. B. "63740". Ohne Zähler ließe sich nicht sagen, welche Zeile fehlt.
-            return Set(try array.map { element in
-                guard let object = element as? [String: Any] else { throw BlechWikiError.malformedResponse("Buch: kein Objekt") }
-                let text = try Row(path: "Buch", values: object).text("titelZ").trimmingCharacters(in: .whitespaces)
-                guard let counter = Int(text) else { throw BlechWikiError.malformedResponse("Buch: titelZ ist keine Zahl") }
-                return counter
-            })
         }
     }
 

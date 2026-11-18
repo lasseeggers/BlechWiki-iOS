@@ -30,7 +30,7 @@ public final class AppContainer {
         myBooks = MyBooksRepository(db: db, preferences: preferences)
         settings = SettingsRepository(db: db, preferences: preferences)
         let masterDataSync = MasterDataSync(api: api, db: db, snapshot: snapshot)
-        fundstellen = FundstellenRepository(api: api, db: db, sync: masterDataSync)
+        fundstellen = FundstellenRepository(db: db, sync: masterDataSync)
         hymnal = HymnalRepository(db: db, settings: settings)
         // Listen sind Nutzerdaten in eigener Datei. Lässt sie sich nicht öffnen, läuft die App ohne
         // Listen weiter. Gelöscht wird sie nie, auch nicht, wenn `db` neu aufgebaut wird.
@@ -40,11 +40,6 @@ public final class AppContainer {
             db: db,
             preferences: preferences
         )
-        sync = SyncCoordinator(
-            sync: masterDataSync,
-            fundstellen: fundstellen,
-            preferences: preferences,
-            db: db
-        )
+        sync = SyncCoordinator(sync: masterDataSync)
     }
 }
